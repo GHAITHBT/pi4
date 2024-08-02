@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pick By Color</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+    $(document).ready(function() {
+        $('#car_id').focus();
+
+        $('#scan-form').on('submit', function(event) {
+            event.preventDefault();
+            const carId = $('#car_id').val().trim();
+
+            if (carId) {
+                $('#loading-overlay').show(); // Show loading spinner
+                $('#error').hide(); // Hide error box
+                $.post('/compare_materials', { car_id: carId }, function(data) {
+                    $('#results').html(data);
+                    $('#car_id').val('').focus(); // Clear the input field and refocus
+                    $('#loading-overlay').hide(); // Hide loading spinner
+                }).fail(function(jqXHR) {
+                    $('#loading-overlay').hide(); // Hide loading spinner
+                    if (jqXHR.status === 404) {
+                        $('#error').text('No matching materials found or no configuration file found.').show();
+                    } else {
+                        $('#error').text('An error occurred. Please try again.').show();
+                    }
+                });
+            }
+        });
+    });
+</script>
+
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <img src="{{ url_for('static', filename='logo.png') }}" alt="Company Logo">
+        </div>
+        <div class="center-header">
+            <img src="{{ url_for('static', filename='logoMB.png') }}" alt="Mercedes Logo" class="mercedes-logo">
+           
+        </div>
+        <div class="status">
+            <form action="{{ url_for('logout') }}" method="post" style="display:inline;">
+                <button type="submit" class="logout-button">Logout</button>
+            </form>
+        </div>
+    </header>
+    <main>
+        <h1>Scan CAR ID</h1>
+        <form id="scan-form">
+            <input type="text" id="car_id"  name="car_id" required>
+            <button type="submit">PICK</button>
+        </form>
+        <div class="loading-overlay" id="loading-overlay">
+            <div class="loading-content">Loading...</div>
+        </div>
+        <div id="error" style="display:none;"></div> <!-- Error message -->
+        <div id="results"></div>
+    </main> 
+    <footer class="footer">
+        <div class="team-info">IT_TEAM_SEBNTN</div>
+    </footer>
+</body>
+</html>
