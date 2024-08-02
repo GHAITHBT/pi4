@@ -1,0 +1,175 @@
+/* Global styles */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #f3f3f3;
+    margin: 0;
+    padding: 0;
+    padding-bottom: 50px; /* Ensure main content doesn't overlap with footer */
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #ffffff;
+    padding: 10px 40px;
+}
+
+header .logo img {
+    height: 40px;
+}
+
+header .mercedes-logo {
+    height: 40px; /* Adjust height as needed */
+    margin-right: 10px;
+}
+
+header .status {
+    display: flex;
+    align-items: center;
+}
+
+header .header-text {
+    font-size: 18px;
+    font-weight: bold;
+    color: white;
+}
+
+header .status .dot {
+    height: 10px;
+    width: 10px;
+    background-color: #4CAF50;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 10px;
+}
+
+header .logout-button {
+    background-color: #505050;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    cursor: pointer;
+}
+
+main {
+    padding: 20px;
+    text-align: center;
+}
+
+main h1 {
+    margin-bottom: 20px;
+}
+
+main form {
+    display: inline-block;
+    text-align: left;
+    margin-bottom: 10px;
+}
+
+main form label {
+    display: block;
+    margin-bottom: 10px;
+}
+
+main form input[type="text"] {
+    padding: 10px;
+    margin: 5px 0;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 300px;
+    box-shadow: 0px 0px 5px rgba(0, 0, 0, 0.1);
+}
+
+main form button {
+    background-color: #4caf50;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+.login_button {
+    background-color: #313131;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.loading-overlay {
+    position: fixed;
+    top: 60px;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    display: none; /* Hidden by default */
+}
+
+.loading-overlay .loading-content {
+    color: white;
+    font-weight: bold;
+    padding: 20px;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.error {
+    color: red;
+    margin-top: 20px;
+}
+
+.materials-table {
+    width: 100%;
+    margin-top: 20px;
+    border-collapse: collapse;
+}
+
+.materials-table td {
+    padding: 0px;
+    text-align: center;
+    border: 1px solid #ddd;
+}
+
+.materials-table .material-item {
+    padding: 5px;
+}
+
+.materials-table .material-image {
+    width: 100%;
+    max-width: 700px; /* Adjust to a size that fits your design */
+    height: 50px;
+    object-fit: cover;
+    display: block;
+    margin: 0 auto;
+}
+
+/* Footer styling */
+.footer {
+    display: flex;
+    justify-content: center; /* Center content horizontally */
+    align-items: center; /* Center items vertically */
+    padding: 15px;
+    background-color: #ffffff;
+    color: black;
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    box-sizing: border-box; /* Include padding in width calculation */
+    z-index: 1000; /* Ensure footer is above other content */
+    font-family: Arial, Helvetica, sans-serif;
+    font-weight: bold;
+    text-align: center;
+}
+
+.footer .execution-time, .footer .team-info {
+    font-size: 12px;
+}
