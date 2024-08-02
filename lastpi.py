@@ -3,6 +3,7 @@ import RPi.GPIO as GPIO
 import socket
 import requests
 import time
+import threading
 
 app = Flask(__name__)
 
@@ -30,6 +31,7 @@ BUTTON_PINS = {
 
 STATUS_LED_PIN = 16
 
+# Initialize GPIO
 for pin in LED_PINS.values():
     GPIO.setup(pin, GPIO.OUT)
     GPIO.output(pin, GPIO.LOW)
@@ -70,10 +72,21 @@ def button_callback(channel):
     material = [m for m, p in BUTTON_PINS.items() if p == channel][0]
     GPIO.output(LED_PINS[material], GPIO.LOW)
     # Change to the server's IP address
-    requests.post(f'http://10.110.22.161:5001/confirm_material', json={'material': material, 'hostname': hostname})
+    try:
+        response = requests.post(f'http://10.110.22.161:5001/confirm_material', json={'material': material, 'hostname': hostname})
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Error sending confirmation: {e}")
+
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
 
 def main():
     try:
+        # Start Flask in a separate thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+
         verify_leds()
         for pin in BUTTON_PINS.values():
             GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
@@ -88,4 +101,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    app.run(host='0.0.0.0', port=5000)
