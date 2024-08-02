@@ -1,6 +1,8 @@
 from flask import Flask, request, jsonify
 import RPi.GPIO as GPIO
 import socket
+import requests
+import time
 
 app = Flask(__name__)
 
@@ -67,7 +69,8 @@ def verify_leds():
 def button_callback(channel):
     material = [m for m, p in BUTTON_PINS.items() if p == channel][0]
     GPIO.output(LED_PINS[material], GPIO.LOW)
-    requests.post(f'http://jenwpc0888:5001/confirm_material', json={'material': material, 'hostname': hostname})
+    # Change to the server's IP address
+    requests.post(f'http://10.110.22.161:5001/confirm_material', json={'material': material, 'hostname': hostname})
 
 def main():
     try:
