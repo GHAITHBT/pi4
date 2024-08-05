@@ -1,0 +1,13 @@
+[Unit]
+Description=LED Control Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/led_control.py
+WorkingDirectory=/home/pi
+Restart=always
+User=pi
+Group=pi
+
+[Install]
+WantedBy=multi-user.target
