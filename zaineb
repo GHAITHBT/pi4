@@ -1,0 +1,78 @@
+import RPi.GPIO as GPIO
+import time
+import socket
+
+# Setup
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+# Define the GPIO pins for LEDs and buttons
+material_pins = {
+    'material1': {'led': 17, 'button': 27},  # Example GPIO pins
+    'material2': {'led': 22, 'button': 23},
+    'material3': {'led': 24, 'button': 25},
+    # Add more materials as needed
+}
+
+# Set up GPIO pins
+for material, pins in material_pins.items():
+    GPIO.setup(pins['led'], GPIO.OUT)
+    GPIO.setup(pins['button'], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+def reset_leds():
+    for pins in material_pins.values():
+        GPIO.output(pins['led'], GPIO.LOW)
+
+def light_up_leds(materials):
+    for material in materials:
+        led_pin = material_pins[material]['led']
+        GPIO.output(led_pin, GPIO.HIGH)
+
+def wait_for_confirmations(materials):
+    while materials:
+        for material in materials[:]:  # Iterate over a copy of the list
+            button_pin = material_pins[material]['button']
+            if GPIO.input(button_pin) == GPIO.LOW:
+                led_pin = material_pins[material]['led']
+                GPIO.output(led_pin, GPIO.LOW)
+                materials.remove(material)
+                print(f"Material {material} confirmed.")
+        time.sleep(0.1)  # Short delay for debouncing
+
+def main():
+    reset_leds()
+    
+    # Server setup
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind(('0.0.0.0', 5000))  # Listening on all interfaces
+    server_socket.listen(5)
+    
+    print("Waiting for connection...")
+    
+    try:
+        while True:
+            client_socket, addr = server_socket.accept()
+            print(f"Connection from {addr}")
+            material_code = client_socket.recv(1024).decode('utf-8').strip()
+            material_codes = material_code.split(",")  # Assuming the received data is a comma-separated list of materials
+            
+            # Filter out any unknown material codes
+            valid_materials = [code for code in material_codes if code in material_pins]
+            
+            if valid_materials:
+                light_up_leds(valid_materials)
+                wait_for_confirmations(valid_materials)
+            else:
+                print(f"Unknown material codes: {material_code}")
+            
+            client_socket.close()
+    
+    except KeyboardInterrupt:
+        print("Program interrupted")
+    
+    finally:
+        GPIO.cleanup()
+        server_socket.close()
+
+if __name__ == "__main__":
+    main()
