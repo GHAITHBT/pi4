@@ -1,0 +1,76 @@
+from flask import Flask, request, jsonify
+import RPi.GPIO as GPIO
+import threading
+import time
+
+app = Flask(__name__)
+
+# Predefined materials and corresponding GPIO pins (LED and button)
+predefined_materials = {
+    'material_1': {'led': 17, 'button': 22},  # GPIO 17 for LED, GPIO 22 for button
+    'material_2': {'led': 18, 'button': 23},  # GPIO 18 for LED, GPIO 23 for button
+    'material_3': {'led': 27, 'button': 24},  # GPIO 27 for LED, GPIO 24 for button
+}
+
+# Initialize GPIO settings
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+# Set up all LED and button pins
+for material, pins in predefined_materials.items():
+    GPIO.setup(pins['led'], GPIO.OUT)
+    GPIO.output(pins['led'], GPIO.LOW)
+    GPIO.setup(pins['button'], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+@app.route('/activate_leds', methods=['POST'])
+def activate_leds():
+    data = request.json
+    
+    if not data or 'materials' not in data or not isinstance(data['materials'], list):
+        return jsonify({'error': 'Invalid request format, expected a list of materials'}), 400
+    
+    matched_materials = data['materials']
+
+    # Light up LEDs for all matched materials
+    for material in matched_materials:
+        if material in predefined_materials:
+            GPIO.output(predefined_materials[material]['led'], GPIO.HIGH)
+        else:
+            print(f"Warning: Material '{material}' not found in predefined materials.")
+
+    return jsonify({'status': 'LEDs activated for matched materials'}), 200
+
+def button_callback(channel):
+    material = None
+    for mat, pins in predefined_materials.items():
+        if pins['button'] == channel:
+            material = mat
+            break
+
+    if material:
+        GPIO.output(predefined_materials[material]['led'], GPIO.LOW)
+        print(f"Button pressed for {material}, LED turned off.")
+
+# Assign a callback to each button
+for material, pins in predefined_materials.items():
+    GPIO.add_event_detect(pins['button'], GPIO.FALLING, callback=button_callback, bouncetime=200)
+
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
+
+def main():
+    try:
+        # Start the Flask app in a separate thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+
+        # Main loop to keep the script running and checking button status
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Exiting...")
+    finally:
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
