@@ -1,0 +1,191 @@
+import tkinter as tk
+from tkinter import messagebox
+import mysql.connector
+import pandas as pd
+import requests
+from PIL import Image, ImageTk
+import socket
+ 
+class LoginWindow(tk.Toplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Login")
+        self.geometry("600x300")
+       
+        # Username and Password Entry Widgets
+        tk.Label(self, text="Username", font=('Helvetica', 12)).pack(pady=(20, 5))
+        self.username_entry = tk.Entry(self, font=('Helvetica', 12), relief='flat', bd=0, bg='#f0f0f0')
+        self.username_entry.pack(pady=(0, 20), ipadx=5, ipady=5)
+       
+        tk.Label(self, text="Password", font=('Helvetica', 12)).pack(pady=(0, 5))
+        self.password_entry = tk.Entry(self, show="*", font=('Helvetica', 12), relief='flat', bd=0, bg='#f0f0f0')
+        self.password_entry.pack(pady=(0, 20), ipadx=5, ipady=5)
+       
+        tk.Button(self, text="Login", command=self.login, font=('Helvetica', 12), bg='#4CAF50', fg='white', relief='flat').pack(pady=(10, 20))
+   
+    def login(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        if self.authenticate(username, password):
+            self.destroy()  # Close the login window
+            self.master.show_main_app()  # Open the main application
+        else:
+            messagebox.showerror("Login Failed", "Invalid username or password")
+   
+    def authenticate(self, username, password):
+        try:
+            conn = mysql.connector.connect(
+                host="10.110.10.204",
+                user="Zaineb",
+                password="Passw0rd123",
+                database="inventory_management"  # Use the database where credentials are stored
+            )
+            cursor = conn.cursor()
+            query = "SELECT * FROM users WHERE username = %s AND password = %s"
+            cursor.execute(query, (username, password))
+            result = cursor.fetchone()
+            conn.close()
+            return result is not None
+        except mysql.connector.Error as err:
+            messagebox.showerror("Error", f"Error: {err}")
+            return False
+ 
+class Application(tk.Tk):
+    def __init__(self):
+        super().__init__()
+        self.title("Material Management")
+        self.attributes('-fullscreen', True)  # Open window in full screen
+       
+        # Load and set background image
+        self.bg_image = Image.open("background.jpg")  # Replace with your image file
+        self.bg_image = self.bg_image.resize((1920, 1080), Image.LANCZOS)  # Resize image to fit the window
+        self.bg_photo = ImageTk.PhotoImage(self.bg_image)
+       
+        self.bg_label = tk.Label(self, image=self.bg_photo)
+        self.bg_label.place(relwidth=1, relheight=1)
+       
+        # Raspberry Pi IP address
+        self.raspberry_pi_ip = "10.110.20.205"  # Replace with your Raspberry Pi IP address
+        self.raspberry_pi_port = 5000
+       
+        # Create widgets
+        self.create_widgets()
+   
+    def create_widgets(self):
+        header_bg_color = '#1e1e1e'  # Example color, adjust as needed
+        tk.Label(self, text="ID CAR", bg=header_bg_color, fg='white', font=('Helvetica', 20, 'bold')).pack(pady=(20, 10))
+        self.text_box1 = tk.Entry(self, font=('Helvetica', 16), bg='#333', fg='white', insertbackground='white', relief='flat', bd=0)
+        self.text_box1.pack(ipady=5, padx=10, pady=(0, 20))
+        self.text_box1.bind("<Return>", self.ok_button_click)
+        self.color_frame = tk.Frame(self, relief='flat', bd=0, highlightthickness=1)
+        self.color_frame.pack_forget()  # Hide the color frame initially
+   
+    def show_main_app(self):
+        self.deiconify()  # Show the main application window
+        self.login_window.destroy()  # Destroy the login window
+   
+    def ok_button_click(self, event=None):
+        base_url = "http://10.110.10.204:5000/fetch_jit_components_api?PRODN="
+        complete_url = base_url + self.text_box1.get()
+        print("Complete URL:", complete_url)
+        self.fetch_data_and_compare(complete_url)
+   
+    def fetch_data_and_compare(self, url):
+        try:
+            for widget in self.color_frame.winfo_children():
+                widget.destroy()
+           
+            conn = mysql.connector.connect(
+                host="10.110.10.204",
+                user="Zaineb",
+                password="Passw0rd123",
+                database="inventory_management"
+            )
+            cursor = conn.cursor()
+            query = "SELECT material_code, color1, color2, color3, color4 FROM materials WHERE status = 'active'"
+            cursor.execute(query)
+            db_data = cursor.fetchall()
+            df_db = pd.DataFrame(db_data, columns=['material_code', 'color1', 'color2', 'color3', 'color4'])
+            response = requests.get(url)
+            response.raise_for_status()  # Raise an error for bad responses
+            api_data = response.json()
+            print("API Response:", api_data)
+            results = api_data.get('results', [])
+            if not results:
+                raise ValueError("No 'results' found in the API response.")
+            matching_materials = []
+            for result in results:
+                bom_list = result.get('BOM', [])
+                if not isinstance(bom_list, list):
+                    raise ValueError("'BOM' is not a list in the API response.")
+                api_materials = [item.get('Material') for item in bom_list if 'Material' in item]
+                print("BOM List:", bom_list)
+                print("API Materials:", api_materials)
+                for material in api_materials:
+                    if material in df_db['material_code'].values:
+                        matching_materials.append(df_db[df_db['material_code'] == material].iloc[0])
+            if matching_materials:
+                df_matching = pd.DataFrame(matching_materials)
+                for index, row in df_matching.iterrows():
+                    self.create_color_labels(row, index)
+                    self.send_to_raspberry_pi(row['material_code'])
+                self.color_frame.pack(fill='x', padx=750, pady=190)
+                self.color_frame.lift()  # Ensure the color frame is above the background image
+            else:
+                messagebox.showinfo("No Match", "No matching materials found.")
+                self.color_frame.pack_forget()  # Hide the color frame if no matches
+        except mysql.connector.Error as err:
+            messagebox.showerror("Error", f"Error: {err}")
+        except requests.RequestException as e:
+            messagebox.showerror("Error", f"Request error: {e}")
+        except ValueError as ve:
+            messagebox.showerror("Error", f"Value error: {ve}")
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+   
+    def create_color_labels(self, row, index):
+        color_row_frame = tk.Frame(self.color_frame, bg='#FFFFFF', relief='flat', bd=0, highlightbackground="#E0E0E0", highlightthickness=1)
+        color_row_frame.pack(fill='x', pady=5, padx=5)
+        tk.Label(color_row_frame, text=row['material_code'], bg='#FFFFFF', font=('Helvetica', 14, 'bold')).pack(side="left", padx=10, pady=10)
+        material_code = row['material_code']
+        if material_code.startswith("3MC10"):
+            self.create_double_row_labels(color_row_frame, row)
+        else:
+            self.create_single_row_labels(color_row_frame, row)
+   
+    def create_double_row_labels(self, color_row_frame, row):
+        half_height = 2
+        third_width = 9
+        top_row_frame = tk.Frame(color_row_frame, bg='#FFFFFF', relief='flat', bd=0)
+        top_row_frame.pack(fill='x')
+        color1 = row['color1']
+        color2 = row['color2']
+        color3 = row['color1']
+        tk.Label(top_row_frame, bg=color1, width=third_width, height=half_height, relief="flat", borderwidth=1, highlightbackground="#E0E0E0", highlightthickness=1).pack(side="left", padx=2)
+        tk.Label(top_row_frame, bg=color2, width=third_width, height=half_height, relief="flat", borderwidth=1, highlightbackground="#E0E0E0", highlightthickness=1).pack(side="left", padx=2)
+        tk.Label(top_row_frame, bg=color3, width=third_width, height=half_height, relief="flat", borderwidth=1, highlightbackground="#E0E0E0", highlightthickness=1).pack(side="left", padx=2)
+        tk.Label(color_row_frame, bg=color3, width=third_width, height=half_height, relief="flat", borderwidth=1, highlightbackground="#E0E0E0", highlightthickness=1).pack(side="left", padx=2)
+   
+    def create_single_row_labels(self, color_row_frame, row):
+        height = 5
+        width = 14
+        color1 = row['color1']
+        color2 = row['color2']
+        tk.Label(color_row_frame, bg=color1, width=width, height=height, relief="flat", borderwidth=1, highlightbackground="#E0E0E0", highlightthickness=1).pack(side="left", padx=2)
+        tk.Label(color_row_frame, bg=color2, width=width, height=height, relief="flat", borderwidth=1, highlightbackground="#E0E0E0", highlightthickness=1).pack(side="left", padx=2)
+        tk.Label(color_row_frame, bg=color1, width=width, height=height, relief="flat", borderwidth=1, highlightbackground="#E0E0E0", highlightthickness=1).pack(side="left", padx=2)
+ 
+    def send_to_raspberry_pi(self, material_code):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((self.raspberry_pi_ip, self.raspberry_pi_port))
+            sock.sendall(material_code.encode())
+            sock.close()
+        except socket.error as e:
+            messagebox.showerror("Error", f"Failed to send data to Raspberry Pi: {e}")
+ 
+if __name__ == "__main__":
+    app = Application()
+    app.login_window = LoginWindow(app)
+    app.withdraw()  # Hide main window until login is successful
+    app.mainloop()
