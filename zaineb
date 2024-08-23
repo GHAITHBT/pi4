@@ -1,78 +1,118 @@
+from flask import Flask, request, jsonify
 import RPi.GPIO as GPIO
+import threading
 import time
-import socket
+import mysql.connector
+import requests
 
-# Setup
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
+app = Flask(__name__)
 
-# Define the GPIO pins for LEDs and buttons
-material_pins = {
-    'material1': {'led': 17, 'button': 27},  # Example GPIO pins
-    'material2': {'led': 22, 'button': 23},
-    'material3': {'led': 24, 'button': 25},
-    # Add more materials as needed
-}
+status_led_pin = 9  # Pin for the status LED
+main_app_url = "http://10.110.10.204:8000/confirm_material"  # Replace with your main app's IP address and port
 
-# Set up GPIO pins
-for material, pins in material_pins.items():
-    GPIO.setup(pins['led'], GPIO.OUT)
-    GPIO.setup(pins['button'], GPIO.IN, pull_up_down=GPIO.PUD_UP)
+def get_db_connection():
+    # Modify with your actual database connection details
+    return mysql.connector.connect(
+        host="10.110.10.204",
+        user="Zaineb",
+        password="Passw0rd123",
+        database="inventory_management"  # Use the database where credentials are stored
+    )
 
-def reset_leds():
-    for pins in material_pins.values():
+def fetch_led_button_config():
+    conn = get_db_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT material_code, led_pin, button_pin FROM led_button_config")
+    config = cursor.fetchall()
+    conn.close()
+
+    return {entry['material_code']: {'led': entry['led_pin'], 'button': entry['button_pin']} for entry in config}
+
+def setup_gpio(predefined_materials):
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+
+    for material, pins in predefined_materials.items():
+        GPIO.setup(pins['led'], GPIO.OUT)
         GPIO.output(pins['led'], GPIO.LOW)
+        GPIO.setup(pins['button'], GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-def light_up_leds(materials):
-    for material in materials:
-        led_pin = material_pins[material]['led']
-        GPIO.output(led_pin, GPIO.HIGH)
+    GPIO.setup(status_led_pin, GPIO.OUT)
+    GPIO.output(status_led_pin, GPIO.LOW)
 
-def wait_for_confirmations(materials):
-    while materials:
-        for material in materials[:]:  # Iterate over a copy of the list
-            button_pin = material_pins[material]['button']
-            if GPIO.input(button_pin) == GPIO.LOW:
-                led_pin = material_pins[material]['led']
-                GPIO.output(led_pin, GPIO.LOW)
-                materials.remove(material)
-                print(f"Material {material} confirmed.")
-        time.sleep(0.1)  # Short delay for debouncing
+@app.route('/activate_leds', methods=['POST'])
+def activate_leds():
+    data = request.json
+    
+    if not data or 'materials' not in data or not isinstance(data['materials'], list):
+        return jsonify({'error': 'Invalid request format, expected a list of materials'}), 400
+    
+    matched_materials = data['materials']
+
+    # Light up LEDs for all matched materials
+    for material in matched_materials:
+        if material in predefined_materials:
+            GPIO.output(predefined_materials[material]['led'], GPIO.HIGH)
+        else:
+            print(f"Warning: Material '{material}' not found in database.")
+
+    return jsonify({'status': 'LEDs activated for matched materials'}), 200
+
+def button_callback(channel):
+    material = None
+    for mat, pins in predefined_materials.items():
+        if pins['button'] == channel:
+            material = mat
+            break
+
+    if material:
+        GPIO.output(predefined_materials[material]['led'], GPIO.LOW)
+        print(f"Button pressed for {material}, LED turned off.")
+
+        # Send confirmation to the main app
+        try:
+            response = requests.post(main_app_url, json={'material': material})
+            if response.status_code == 200:
+                print(f"Confirmation sent for material {material}.")
+            else:
+                print(f"Failed to send confirmation for material {material}. HTTP status code: {response.status_code}")
+        except Exception as e:
+            print(f"Error sending confirmation for material {material}: {e}")
+
+def verify_leds(predefined_materials):
+    print("Verifying LEDs...")
+    for pins in predefined_materials.values():
+        GPIO.output(pins['led'], GPIO.HIGH)
+    time.sleep(2)
+    for pins in predefined_materials.values():
+        GPIO.output(pins['led'], GPIO.LOW)
+    print("LED verification complete.")
+
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
 
 def main():
-    reset_leds()
-    
-    # Server setup
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind(('0.0.0.0', 5000))  # Listening on all interfaces
-    server_socket.listen(5)
-    
-    print("Waiting for connection...")
-    
     try:
-        while True:
-            client_socket, addr = server_socket.accept()
-            print(f"Connection from {addr}")
-            material_code = client_socket.recv(1024).decode('utf-8').strip()
-            material_codes = material_code.split(",")  # Assuming the received data is a comma-separated list of materials
-            
-            # Filter out any unknown material codes
-            valid_materials = [code for code in material_codes if code in material_pins]
-            
-            if valid_materials:
-                light_up_leds(valid_materials)
-                wait_for_confirmations(valid_materials)
-            else:
-                print(f"Unknown material codes: {material_code}")
-            
-            client_socket.close()
-    
-    except KeyboardInterrupt:
-        print("Program interrupted")
-    
-    finally:
-        GPIO.cleanup()
-        server_socket.close()
+        predefined_materials = fetch_led_button_config()
+        setup_gpio(predefined_materials)
 
-if __name__ == "__main__":
+        GPIO.output(status_led_pin, GPIO.HIGH)
+        
+        verify_leds(predefined_materials)
+
+        for material, pins in predefined_materials.items():
+            GPIO.add_event_detect(pins['button'], GPIO.FALLING, callback=button_callback, bouncetime=200)
+
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Exiting...")
+    finally:
+        GPIO.output(status_led_pin, GPIO.LOW)
+        GPIO.cleanup()
+
+if __name__ == '__main__':
     main()
