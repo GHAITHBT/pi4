@@ -1,0 +1,19 @@
+[Unit]
+Description=LED Control Service
+After=network-online.target
+Requires=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/pi/Desktop/Flask_Server/app.py
+WorkingDirectory=/home/pi/Desktop/Flask_Server
+Restart=always
+User=pi
+Group=pi
+
+[Install]
+WantedBy=multi-user.target
+
+
+sudo systemctl daemon-reload
+sudo systemctl restart flask_app.service
+sudo systemctl status flask_app.service
