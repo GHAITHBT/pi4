@@ -1,9 +1,15 @@
-%Run app.py
+>> %Run app.py
+ * Serving Flask app "app" (lazy loading)
+ * Environment: production
+   WARNING: Do not use the development server in a production environment.
+   Use a production WSGI server instead.
+ * Debug mode: off
+ * Running on http://0.0.0.0:5000/ (Press CTRL+C to quit)
+Connected to Flask server via SocketIO.
+Verifying LEDs...
 Traceback (most recent call last):
   File "/home/pi/Desktop/Flask_Server/app.py", line 227, in <module>
     main()
-  File "/home/pi/Desktop/Flask_Server/app.py", line 195, in main
-    initialize_gpio(config)
-  File "/home/pi/Desktop/Flask_Server/app.py", line 62, in initialize_gpio
-    GPIO.setup(pin, GPIO.OUT)
-RuntimeError: Not running on a RPi!
+  File "/home/pi/Desktop/Flask_Server/app.py", line 210, in main
+    GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
+RuntimeError: Failed to add edge detection
