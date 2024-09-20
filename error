@@ -1,0 +1,9 @@
+%Run app.py
+Traceback (most recent call last):
+  File "/home/pi/Desktop/Flask_Server/app.py", line 227, in <module>
+    main()
+  File "/home/pi/Desktop/Flask_Server/app.py", line 195, in main
+    initialize_gpio(config)
+  File "/home/pi/Desktop/Flask_Server/app.py", line 62, in initialize_gpio
+    GPIO.setup(pin, GPIO.OUT)
+RuntimeError: Not running on a RPi!
