@@ -18,3 +18,37 @@ def confirm_material():
         return jsonify({'status': f'Material {material} confirmed and LED activated'}), 200
     else:
         return jsonify({'error': 'Invalid material'}), 400
+
+
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    material = data.get('material')
+
+    if not material:
+        return jsonify({'error': 'No material provided'}), 400
+
+    if material in led_pins:
+        GPIO.output(led_pins[material], GPIO.HIGH)
+        logging.info(f"LED for material {material} activated.")
+        return jsonify({'status': f'LED for material {material} activated'}), 200
+    else:
+        return jsonify({'error': 'Invalid material'}), 400
+
+
+# Button callback for when the user clicks the button to confirm the material
+def button_callback(channel):
+    # Get the material associated with the pressed button
+    material = [m for m, p in button_pins.items() if p == channel][0]
+
+    # Turn off the LED
+    GPIO.output(led_pins[material], GPIO.LOW)
+    logging.info(f"LED for material {material} turned off.")
+
+    # Send confirmation to the main server
+    try:
+        response = requests.post(f'http://10.110.10.204:5001/confirmation_material', json={'material': material})
+        response.raise_for_status()
+        logging.info(f"Confirmation sent for material {material}.")
+    except requests.RequestException as e:
+        logging.error(f"Error sending confirmation: {e}")
