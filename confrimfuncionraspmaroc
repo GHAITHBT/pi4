@@ -1,0 +1,20 @@
+# Add this route to the Raspberry Pi Flask app
+
+@app.route('/confirm_material', methods=['POST'])
+def confirm_material():
+    data = request.json
+    material = data.get('material')
+
+    if not material:
+        return jsonify({'error': 'No material provided'}), 400
+
+    # Assuming you want to activate the LED for the given material
+    if material in led_pins:
+        GPIO.output(led_pins[material], GPIO.HIGH)
+        time.sleep(2)  # Example delay, adjust as needed
+        GPIO.output(led_pins[material], GPIO.LOW)
+
+        # You can add any other logic here, e.g., logging or saving the confirmation to the database
+        return jsonify({'status': f'Material {material} confirmed and LED activated'}), 200
+    else:
+        return jsonify({'error': 'Invalid material'}), 400
