@@ -1,0 +1,117 @@
+# Variable to keep track of current LED to activate
+current_led_index = 0  # Start with the first LED
+
+# Fetch configuration from the database (unchanged)
+def fetch_configuration():
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+# Initialize GPIO with the fetched configuration (unchanged)
+def initialize_gpio(config):
+    global led_pins, button_pins, status_led_pin
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+    
+    led_pins = config.get('led_pins', {})
+    button_pins = config.get('button_pins', {})
+    status_led_pin = config.get('status_led_pin', 0)
+    
+    # Setup LED and button pins
+    for pin in led_pins.values():
+        GPIO.setup(pin, GPIO.OUT)
+        GPIO.output(pin, GPIO.LOW)
+
+    for pin in button_pins.values():
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    GPIO.setup(status_led_pin, GPIO.OUT)
+    GPIO.output(status_led_pin, GPIO.HIGH)
+
+# Sequential activation function
+def activate_next_led():
+    global current_led_index
+    materials = list(led_pins.keys())
+    
+    if current_led_index < len(materials):
+        material = materials[current_led_index]
+        # Turn on the current LED
+        GPIO.output(led_pins[material], GPIO.HIGH)
+        print(f"LED for {material} activated.")
+    else:
+        print("All LEDs have been activated.")
+
+# Button callback to confirm LED activation and move to the next
+def button_callback(channel):
+    global current_led_index
+    materials = list(led_pins.keys())
+    
+    if current_led_index < len(materials):
+        material = materials[current_led_index]
+        # Turn off the current LED
+        GPIO.output(led_pins[material], GPIO.LOW)
+        print(f"LED for {material} confirmed and deactivated.")
+        
+        try:
+            # Send confirmation to the server
+            response = requests.post(f'http://10.110.10.204:5001/confirmation_material', json={'material': material, 'hostname': hostname})
+            response.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Error sending confirmation: {e}")
+        
+        # Move to the next LED
+        current_led_index += 1
+        activate_next_led()
+
+# Flask route to start sequential LED activation
+@app.route('/start_led_sequence', methods=['POST'])
+def start_led_sequence():
+    global current_led_index
+    current_led_index = 0  # Reset to the first LED
+    activate_next_led()
+    return jsonify({'status': 'LED sequence started'}), 200
+
+# Main loop to listen for button presses (unchanged)
+def main():
+    config = fetch_configuration()
+    if not config:
+        print("No configuration found for this Raspberry Pi.")
+        return
+    
+    initialize_gpio(config)
+
+    try:
+        # Setup button event listeners
+        for pin in button_pins.values():
+            GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
+
+        # Main loop to check network and handle GPIO status LED
+        while True:
+            if check_network():
+                GPIO.output(status_led_pin, GPIO.HIGH)
+                time.sleep(1)
+            else:
+                GPIO.output(status_led_pin, GPIO.LOW)
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        GPIO.output(status_led_pin, GPIO.LOW)
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
