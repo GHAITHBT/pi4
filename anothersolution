@@ -1,0 +1,169 @@
+from flask import Flask, request, jsonify
+import RPi.GPIO as GPIO
+import socket
+import requests
+import time
+import threading
+import mysql.connector
+from mysql.connector import pooling
+import json
+import subprocess
+import socketio
+
+app = Flask(__name__)
+
+hostname = socket.gethostname()
+sio = socketio.Client()
+
+# Database configuration
+db_config = {
+    'host': '10.110.10.204',
+    'user': 'root',
+    'password': 'Passw0rd123',
+    'database': 'PickByLight'
+}
+
+# Set up database connection pool
+mysql_pool = pooling.MySQLConnectionPool(
+    pool_name="mysql_pool",
+    pool_size=5,
+    **db_config
+)
+
+def get_db_connection():
+    return mysql_pool.get_connection()
+
+# Get the IP address of the Raspberry Pi
+def get_ip_address():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+# Initialize GPIO based on the configuration
+def initialize_gpio(config):
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+
+    global led_pins, button_pins, status_led_pin
+    led_pins = config.get('led_pins', {})
+    button_pins = config.get('button_pins', {})
+    status_led_pin = config.get('status_led_pin', 0)
+
+    # Setup LED pins
+    for pin in led_pins.values():
+        GPIO.setup(pin, GPIO.OUT)
+        GPIO.output(pin, GPIO.LOW)
+
+    # Setup button pins
+    for pin in button_pins.values():
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    # Setup status LED pin
+    GPIO.setup(status_led_pin, GPIO.OUT)
+    GPIO.output(status_led_pin, GPIO.HIGH)
+
+# Fetch configuration from the database
+def fetch_configuration():
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+# Activate the LED for the current material
+def activate_led(material):
+    if material in led_pins:
+        GPIO.output(led_pins[material], GPIO.HIGH)
+
+# Deactivate the LED for the current material
+def deactivate_led(material):
+    if material in led_pins:
+        GPIO.output(led_pins[material], GPIO.LOW)
+
+# Button callback when pressed
+def button_callback(channel):
+    global current_material_index, materials_sequence
+    material = materials_sequence[current_material_index]
+
+    # Deactivate the current LED
+    deactivate_led(material)
+
+    # Send confirmation to server
+    try:
+        response = requests.post(f'http://10.110.10.204:5001/confirmation_material', json={'material': material, 'hostname': hostname})
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Error sending confirmation: {e}")
+
+    # Move to the next material and activate its LED
+    current_material_index += 1
+    if current_material_index < len(materials_sequence):
+        next_material = materials_sequence[current_material_index]
+        activate_led(next_material)
+    else:
+        print("All materials processed.")
+
+# Verify LEDs by lighting up one at a time
+def verify_leds():
+    print("Starting the pick-by-light sequence...")
+    activate_led(materials_sequence[0])
+
+# Setup button event listeners
+def setup_button_listeners():
+    for pin in button_pins.values():
+        GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
+
+# Main function to manage GPIO and configuration
+def main():
+    global materials_sequence, current_material_index
+
+    config = fetch_configuration()
+    if not config:
+        print("No configuration found for this Raspberry Pi.")
+        return
+
+    initialize_gpio(config)
+
+    # List of materials in sequence for pick-by-light
+    materials_sequence = list(led_pins.keys())
+    current_material_index = 0
+
+    try:
+        # Verify LEDs (light up the first LED)
+        verify_leds()
+
+        # Setup button event listeners
+        setup_button_listeners()
+
+        # Main loop to keep checking network and maintain GPIO
+        while True:
+            time.sleep(1)
+
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
