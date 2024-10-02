@@ -1,0 +1,25 @@
+import RPi.GPIO as GPIO
+import requests
+import time
+
+# Assuming you have a dictionary `led_pins` mapping material to GPIO pins for LEDs
+# and a dictionary `button_pins` mapping materials to GPIO pins for buttons
+
+def button_callback(channel):
+    material = [m for m, p in button_pins.items() if p == channel][0]  # Get the material based on the pressed button
+    GPIO.output(led_pins[material], GPIO.LOW)  # Turn off the LED for the material
+
+    # Send a POST request to confirm the material via Flask API
+    try:
+        response = requests.post(f'http://10.110.10.204:5001/confirmation_material', json={'material': material, 'hostname': hostname})
+        response.raise_for_status()
+
+        # Optional: Check response content if needed for further action
+        print(f"Material {material} confirmed successfully.")
+    except requests.RequestException as e:
+        print(f"Error sending confirmation for material {material}: {e}")
+
+# Setup GPIO event detection (assuming pull-down resistors and buttons connected to GPIO inputs)
+for material, pin in button_pins.items():
+    GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_DOWN)
+    GPIO.add_event_detect(pin, GPIO.RISING, callback=button_callback, bouncetime=300)
