@@ -1,52 +1,9 @@
 from flask import Flask, request, jsonify
 import RPi.GPIO as GPIO
-import socket
-import requests
 import time
 import threading
-import mysql.connector
-from mysql.connector import pooling
-import json
-import subprocess
-import socketio  # Add SocketIO client
 
 app = Flask(__name__)
-
-hostname = socket.gethostname()
-sio = socketio.Client()  # Create SocketIO client instance
-
-# Database configuration
-db_config = {
-    'host': '10.110.10.204',
-    'user': 'root',
-    'password': 'Passw0rd123',
-    'database': 'PickByLight'
-}
-
-# Set up database connection pool
-mysql_pool = pooling.MySQLConnectionPool(
-    pool_name="mysql_pool",
-    pool_size=5,
-    **db_config
-)
-
-def get_db_connection():
-    return mysql_pool.get_connection()
-
-# Get the IP address of the Raspberry Pi
-def get_ip_address():
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
-
-GPIO.setmode(GPIO.BCM)
-GPIO.setwarnings(False)
 
 # Global state for LED and button processing
 current_led_index = -1  # To track which LED is currently activated
@@ -58,65 +15,21 @@ button_pins = {}  # {material_name: pin_number}
 # Keep track of materials in order
 material_order = []  # Holds materials in the order they should be activated
 
-# Initialize GPIO based on the configuration
-def initialize_gpio(config):
-    global led_pins, button_pins
-    led_pins = config.get('led_pins', {})
-    button_pins = config.get('button_pins', {})
-    status_led_pin = config.get('status_led_pin', 0)
-
-    # Setup LEDs
-    for pin in led_pins.values():
-        GPIO.setup(pin, GPIO.OUT)
-        GPIO.output(pin, GPIO.LOW)
-
-    # Setup buttons with callbacks
-    for pin in button_pins.values():
-        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-        GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
-
-    # Setup status LED pin
-    GPIO.setup(status_led_pin, GPIO.OUT)
-    GPIO.output(status_led_pin, GPIO.HIGH)
-
-# Fetch configuration from the database
-def fetch_configuration():
-    ip_address = get_ip_address()
-    connection = get_db_connection()
-    try:
-        cursor = connection.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
-        config = cursor.fetchone()
-        if config:
-            # Convert JSON fields to Python objects
-            config['led_pins'] = json.loads(config['led_pins'])
-            config['button_pins'] = json.loads(config['button_pins'])
-            return config
-        return {}
-    except mysql.connector.Error as err:
-        print(f"Database error: {err}")
-        return {}
-    finally:
-        cursor.close()
-        connection.close()
-
-# Activate LEDs one by one
+# Activate LEDs one by one (but don't change how materials are received)
 @app.route('/activate_led', methods=['POST'])
 def activate_led():
     global current_led_index
     data = request.json
-    materials = data.get('materials', [])
+    material = data.get('material')  # Keeping the same way materials are sent
     
-    # Store the order of materials to process
-    global material_order
-    material_order = materials
-
-    if materials:
-        # Initialize the current LED index
+    if material in led_pins:
+        # Reset current LED index and set up material order with just this material
+        global material_order
+        material_order = [material]
         current_led_index = 0
         turn_on_next_led()
-        return jsonify({'status': 'Started LED activation process'}), 200
-    return jsonify({'error': 'No materials provided'}), 400
+        return jsonify({'status': 'Started LED activation for material'}), 200
+    return jsonify({'error': 'Invalid material'}), 400
 
 # Turn on the next LED in the sequence
 def turn_on_next_led():
@@ -143,7 +56,7 @@ def button_callback(channel):
         GPIO.output(led_pins[material], GPIO.LOW)
         print(f"Turned off LED for {material}")
 
-        # Move to the next LED
+        # Move to the next LED (if applicable)
         current_led_index += 1
         if current_led_index < len(material_order):
             turn_on_next_led()
@@ -152,74 +65,26 @@ def button_callback(channel):
     else:
         print(f"Unexpected button press for {material}. Awaiting {material_order[current_led_index]}.")
 
-# Deactivate a specific LED
-@app.route('/deactivate_led', methods=['POST'])
-def deactivate_led():
-    data = request.json
-    material = data.get('material')
-    if material in led_pins:
-        GPIO.output(led_pins[material], GPIO.LOW)
-        return jsonify({'status': 'LED deactivated'}), 200
-    return jsonify({'error': 'Invalid material'}), 400
+# Function to initialize the GPIO setup and event listeners for buttons
+def initialize_gpio(config):
+    global led_pins, button_pins
+    led_pins = config.get('led_pins', {})
+    button_pins = config.get('button_pins', {})
+    status_led_pin = config.get('status_led_pin', 0)
 
-# Verify LEDs by blinking each one briefly
-def verify_leds():
-    print("Verifying LEDs...")
-    for material, pin in led_pins.items():
-        GPIO.output(pin, GPIO.HIGH)
-        time.sleep(1)
+    # Setup LEDs
+    for pin in led_pins.values():
+        GPIO.setup(pin, GPIO.OUT)
         GPIO.output(pin, GPIO.LOW)
-        time.sleep(0.2)
 
-# Check network connectivity by pinging the server
-def check_network():
-    try:
-        result = subprocess.run(['ping', '-c', '1', '10.110.10.204'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return result.returncode == 0
-    except Exception:
-        return False
+    # Setup buttons with callbacks
+    for pin in button_pins.values():
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+        GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
 
-# Blink the status LED a specified number of times
-def blink_status_led(times=3):
-    for _ in range(times):
-        GPIO.output(status_led_pin, GPIO.HIGH)
-        time.sleep(0.2)
-        GPIO.output(status_led_pin, GPIO.LOW)
-        time.sleep(0.2)
-
-# SocketIO event handler for configuration updates
-@sio.event
-def configuration_update(data):
-    print(f"Configuration update received: {data}")
-
-    # Blink status LED three times to signal update
-    blink_status_led()
-
-    # Fetch and apply the new configuration
-    new_config = fetch_configuration()
-    if new_config:
-        global led_pins, button_pins, status_led_pin
-        led_pins = new_config.get('led_pins', {})
-        button_pins = new_config.get('button_pins', {})
-        status_led_pin = new_config.get('status_led_pin', 0)
-
-        # Reinitialize the GPIO with the new config
-        initialize_gpio(new_config)
-        print("Configuration updated successfully.")
-    else:
-        print("Failed to fetch new configuration.")
-
-# Connect to the Flask server via SocketIO
-def connect_socketio():
-    try:
-        sio.connect('http://10.110.10.204:5001')
-        print("Connected to Flask server via SocketIO.")
-    except Exception as e:
-        print(f"Failed to connect to Flask server: {e}")
-
-# Run Flask app in a separate thread
-def run_flask():
-    app.run(host='0.0.0.0', port=5000)
+    # Setup status LED pin
+    GPIO.setup(status_led_pin, GPIO.OUT)
+    GPIO.output(status_led_pin, GPIO.HIGH)
 
 # Main function to manage GPIO and configuration
 def main():
@@ -239,12 +104,6 @@ def main():
         # Start Flask server in a separate thread
         flask_thread = threading.Thread(target=run_flask, daemon=True)
         flask_thread.start()
-
-        # Connect to the server for configuration updates
-        connect_socketio()
-
-        # Verify LEDs are functioning correctly
-        verify_leds()
 
         # Main loop to check network and handle GPIO status LED
         while True:
