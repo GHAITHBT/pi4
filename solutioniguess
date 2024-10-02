@@ -1,0 +1,233 @@
+from flask import Flask, request, jsonify
+import RPi.GPIO as GPIO
+import socket
+import requests
+import time
+import threading
+import mysql.connector
+from mysql.connector import pooling
+import json
+import subprocess
+from collections import deque
+import socketio
+
+app = Flask(__name__)
+
+hostname = socket.gethostname()
+sio = socketio.Client()  # Create SocketIO client instance
+
+# Database configuration
+db_config = {
+    'host': '10.110.10.204',
+    'user': 'root',
+    'password': 'Passw0rd123',
+    'database': 'PickByLight'
+}
+
+# Set up database connection pool
+mysql_pool = pooling.MySQLConnectionPool(
+    pool_name="mysql_pool",
+    pool_size=5,
+    **db_config
+)
+
+def get_db_connection():
+    return mysql_pool.get_connection()
+
+# Get the IP address of the Raspberry Pi
+def get_ip_address():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+# Initialize GPIO based on the configuration
+def initialize_gpio(config):
+    GPIO.setmode(GPIO.BCM)
+    GPIO.setwarnings(False)
+
+    led_pins = config.get('led_pins', {})
+    button_pins = config.get('button_pins', {})
+    status_led_pin = config.get('status_led_pin', 0)
+
+    # Setup LED pins
+    for pin in led_pins.values():
+        GPIO.setup(pin, GPIO.OUT)
+        GPIO.output(pin, GPIO.LOW)
+
+    # Setup button pins
+    for pin in button_pins.values():
+        GPIO.setup(pin, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+    # Setup status LED pin
+    GPIO.setup(status_led_pin, GPIO.OUT)
+    GPIO.output(status_led_pin, GPIO.HIGH)
+
+# Fetch configuration from the database
+def fetch_configuration():
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            # Convert JSON fields to Python objects
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+# Global variables to track queue of materials and current active material
+material_queue = deque()  # Queue to process materials one by one
+current_material = None  # Keep track of the currently active material
+led_pins = {}  # Will hold LED pins configuration
+button_pins = {}  # Will hold button pins configuration
+
+# Enqueue the material and process the queue
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    material = data.get('material')
+    workstation_id = data.get('workstation_id')  # Workstation ID or hostname
+    if material in led_pins and workstation_id:
+        material_queue.append((material, workstation_id))  # Add material and workstation ID to the queue
+        process_next_material()  # Try processing the next material
+        return jsonify({'status': f'Material {material} from {workstation_id} enqueued'}), 200
+    return jsonify({'error': 'Invalid material or workstation_id'}), 400
+
+# Process the next material in the queue
+def process_next_material():
+    global current_material
+
+    if current_material is None and material_queue:
+        current_material, current_workstation_id = material_queue.popleft()  # Get the next material and workstation from the queue
+        GPIO.output(led_pins[current_material], GPIO.HIGH)  # Light up the corresponding LED
+        print(f"Material {current_material} from {current_workstation_id} LED activated.")
+
+# Button callback when pressed
+def button_callback(channel):
+    global current_material, current_workstation_id
+
+    if current_material:
+        GPIO.output(led_pins[current_material], GPIO.LOW)  # Turn off the current LED
+        print(f"Material {current_material} LED deactivated.")
+
+        try:
+            # Send confirmation to the correct workstation that sent the material
+            response = requests.post(f'http://{current_workstation_id}:5001/confirmation_material', 
+                                     json={'material': current_material, 'hostname': hostname})
+            response.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Error sending confirmation to {current_workstation_id}: {e}")
+
+        current_material = None  # Reset the current material
+        current_workstation_id = None  # Reset the current workstation
+        process_next_material()  # Process the next material in the queue
+
+# Check network connectivity by pinging the server
+def check_network():
+    try:
+        result = subprocess.run(['ping', '-c', '1', '10.110.10.204'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+# Blink the status LED a specified number of times
+def blink_status_led(times=3):
+    for _ in range(times):
+        GPIO.output(status_led_pin, GPIO.HIGH)
+        time.sleep(0.2)
+        GPIO.output(status_led_pin, GPIO.LOW)
+        time.sleep(0.2)
+
+# SocketIO event handler for configuration updates
+@sio.event
+def configuration_update(data):
+    print(f"Configuration update received: {data}")
+
+    # Blink status LED three times to signal update
+    blink_status_led()
+
+    # Fetch and apply the new configuration
+    new_config = fetch_configuration()
+    if new_config:
+        global led_pins, button_pins, status_led_pin
+        led_pins = new_config.get('led_pins', {})
+        button_pins = new_config.get('button_pins', {})
+        status_led_pin = new_config.get('status_led_pin', 0)
+
+        # Reinitialize the GPIO with the new config
+        initialize_gpio(new_config)
+        print("Configuration updated successfully.")
+    else:
+        print("Failed to fetch new configuration.")
+
+# Connect to the Flask server via SocketIO
+def connect_socketio():
+    try:
+        sio.connect('http://10.110.10.204:5001')
+        print("Connected to Flask server via SocketIO.")
+    except Exception as e:
+        print(f"Failed to connect to Flask server: {e}")
+
+# Run Flask app in a separate thread
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
+
+# Main function to manage GPIO and configuration
+def main():
+    config = fetch_configuration()
+    if not config:
+        print("No configuration found for this Raspberry Pi.")
+        return
+
+    global led_pins, button_pins, status_led_pin
+    led_pins = config.get('led_pins', {})
+    button_pins = config.get('button_pins', {})
+    status_led_pin = config.get('status_led_pin', 0)
+
+    initialize_gpio(config)
+
+    try:
+        # Start Flask server in a separate thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+
+        # Connect to the server for configuration updates
+        connect_socketio()
+
+        # Setup button event listeners
+        for pin in button_pins.values():
+            GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
+
+        # Main loop to check network and handle GPIO status LED
+        while True:
+            if check_network():
+                GPIO.output(status_led_pin, GPIO.HIGH)
+                time.sleep(1)
+            else:
+                GPIO.output(status_led_pin, GPIO.LOW)
+                time.sleep(0.5)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        GPIO.output(status_led_pin, GPIO.LOW)
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
