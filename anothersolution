@@ -48,16 +48,8 @@ def get_ip_address():
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-# Maintain a list of materials to activate LEDs one by one
-material_order = []  # This will be populated with the order of materials
-current_material_index = 0  # Track the index of the current material being confirmed
-
 # Initialize GPIO based on the configuration
 def initialize_gpio(config):
-    global material_order, current_material_index
-    material_order = list(config.get('led_pins', {}).keys())  # Ensure materials are ordered
-    current_material_index = 0  # Start with the first material
-
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
 
@@ -77,11 +69,6 @@ def initialize_gpio(config):
     # Setup status LED pin
     GPIO.setup(status_led_pin, GPIO.OUT)
     GPIO.output(status_led_pin, GPIO.HIGH)
-
-    # Light up the first LED
-    if material_order:
-        first_material = material_order[current_material_index]
-        GPIO.output(led_pins[first_material], GPIO.HIGH)
 
 # Fetch configuration from the database
 def fetch_configuration():
@@ -104,15 +91,32 @@ def fetch_configuration():
         cursor.close()
         connection.close()
 
-# Activate the specified LED
+# Store current material index
+current_material_index = 0
+led_pins = {}
+button_pins = {}
+status_led_pin = 0
+
+# Activate the specified LED one by one
 @app.route('/activate_led', methods=['POST'])
 def activate_led():
-    data = request.json
-    material = data.get('material')
-    if material in led_pins:
+    global current_material_index
+    if current_material_index < len(led_pins):
+        material = list(led_pins.keys())[current_material_index]
         GPIO.output(led_pins[material], GPIO.HIGH)
-        return jsonify({'status': 'LED activated'}), 200
-    return jsonify({'error': 'Invalid material'}), 400
+        return jsonify({'status': 'LED activated', 'material': material}), 200
+    return jsonify({'error': 'No more materials to activate'}), 400
+
+# Confirm the current material and move to the next one
+@app.route('/confirm_material', methods=['POST'])
+def confirm_material():
+    global current_material_index
+    if current_material_index < len(led_pins):
+        material = list(led_pins.keys())[current_material_index]
+        GPIO.output(led_pins[material], GPIO.LOW)  # Turn off the current LED
+        current_material_index += 1  # Move to the next material
+        return activate_led()  # Activate the next LED
+    return jsonify({'status': 'All materials processed'}), 200
 
 # Deactivate the specified LED
 @app.route('/deactivate_led', methods=['POST'])
@@ -133,32 +137,15 @@ def verify_leds():
         GPIO.output(pin, GPIO.LOW)
         time.sleep(0.2)
 
-# Button callback when pressed (for confirming material pick)
+# Button callback when pressed
 def button_callback(channel):
-    global current_material_index
-
-    if current_material_index < len(material_order):
-        material = material_order[current_material_index]
-        if button_pins.get(material) == channel:
-            GPIO.output(led_pins[material], GPIO.LOW)  # Turn off current LED
-
-            try:
-                # Send confirmation to the server
-                response = requests.post(f'http://10.110.10.204:5001/confirmation_material', 
-                                         json={'material': material, 'hostname': hostname})
-                response.raise_for_status()
-                print(f"Material {material} confirmed.")
-            except requests.RequestException as e:
-                print(f"Error sending confirmation: {e}")
-                return
-
-            # Move to the next material (next LED)
-            current_material_index += 1
-            if current_material_index < len(material_order):
-                next_material = material_order[current_material_index]
-                GPIO.output(led_pins[next_material], GPIO.HIGH)  # Turn on the next LED
-            else:
-                print("All materials confirmed.")
+    material = [m for m, p in button_pins.items() if p == channel][0]
+    GPIO.output(led_pins[material], GPIO.LOW)
+    try:
+        response = requests.post(f'http://10.110.10.204:5001/confirmation_material', json={'material': material, 'hostname': hostname})
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Error sending confirmation: {e}")
 
 # Check network connectivity by pinging the server
 def check_network():
