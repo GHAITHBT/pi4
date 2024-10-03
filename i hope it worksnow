@@ -1,0 +1,50 @@
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    materials = data.get('materials', [])
+    
+    if not materials:
+        return jsonify({'error': 'No materials provided'}), 400
+    
+    # Store the material list globally (or in a session variable)
+    global material_list
+    material_list = materials
+    
+    # Activate the first LED in the material list
+    current_material = material_list[0]
+    if current_material in led_pins:
+        GPIO.output(led_pins[current_material], GPIO.HIGH)
+        return jsonify({'status': f'LED for {current_material} activated'}), 200
+    
+    return jsonify({'error': 'Invalid material'}), 400
+
+
+
+# Store the list of materials globally
+material_list = []
+
+# Button callback when pressed
+def button_callback(channel):
+    global material_list
+    
+    # Find the current material based on the button pin pressed
+    if material_list:
+        current_material = material_list[0]
+        
+        # Turn off the LED for the current material
+        GPIO.output(led_pins[current_material], GPIO.LOW)
+        
+        # Send confirmation to the server
+        try:
+            response = requests.post(f'http://10.110.10.204:5001/confirmation_material', json={'material': current_material, 'hostname': hostname})
+            response.raise_for_status()
+        except requests.RequestException as e:
+            print(f"Error sending confirmation: {e}")
+        
+        # Remove the confirmed material from the list
+        material_list.pop(0)
+        
+        # Activate the next LED if there are more materials left
+        if material_list:
+            next_material = material_list[0]
+            GPIO.output(led_pins[next_material], GPIO.HIGH)
