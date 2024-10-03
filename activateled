@@ -1,0 +1,26 @@
+# Activate the LEDs for materials one by one, waiting for button press confirmation
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    materials = data.get('materials', [])
+    
+    if not materials:
+        return jsonify({'error': 'No materials provided'}), 400
+
+    for material in materials:
+        if material in led_pins:
+            # Turn on the LED for the current material
+            GPIO.output(led_pins[material], GPIO.HIGH)
+            print(f"LED for {material} activated. Waiting for confirmation.")
+
+            # Wait for the button press confirmation before moving to the next material
+            while True:
+                if GPIO.input(button_pins[material]) == GPIO.LOW:  # Assuming button press pulls the pin LOW
+                    GPIO.output(led_pins[material], GPIO.LOW)  # Turn off the LED after confirmation
+                    print(f"Confirmation received for {material}. Moving to next material.")
+                    time.sleep(0.5)  # Add small delay to debounce
+                    break
+        else:
+            return jsonify({'error': f'Invalid material: {material}'}), 400
+
+    return jsonify({'status': 'All materials processed'}), 200
