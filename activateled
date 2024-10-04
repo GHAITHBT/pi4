@@ -1,26 +1,34 @@
-# Activate the LEDs for materials one by one, waiting for button press confirmation
 @app.route('/activate_led', methods=['POST'])
 def activate_led():
     data = request.json
     materials = data.get('materials', [])
+    machine_name = data.get('machine_name')  # Fetch machine_name from the request
     
-    if not materials:
-        return jsonify({'error': 'No materials provided'}), 400
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
 
     for material in materials:
         if material in led_pins:
             # Turn on the LED for the current material
             GPIO.output(led_pins[material], GPIO.HIGH)
-            print(f"LED for {material} activated. Waiting for confirmation.")
+            print(f"LED for {material} activated for machine {machine_name}. Waiting for confirmation.")
 
             # Wait for the button press confirmation before moving to the next material
             while True:
                 if GPIO.input(button_pins[material]) == GPIO.LOW:  # Assuming button press pulls the pin LOW
                     GPIO.output(led_pins[material], GPIO.LOW)  # Turn off the LED after confirmation
-                    print(f"Confirmation received for {material}. Moving to next material.")
+                    print(f"Confirmation received for {material}. Moving to next material for machine {machine_name}.")
                     time.sleep(0.5)  # Add small delay to debounce
+
+                    # Send the confirmation back to the server with the machine name
+                    try:
+                        response = requests.post(f'http://10.110.10.204:5001/confirmation_material', 
+                                                 json={'material': material, 'hostname': hostname, 'machine_name': machine_name})
+                        response.raise_for_status()
+                    except requests.RequestException as e:
+                        print(f"Error sending confirmation for {material}: {e}")
                     break
         else:
             return jsonify({'error': f'Invalid material: {material}'}), 400
 
-    return jsonify({'status': 'All materials processed'}), 200
+    return jsonify({'status': 'All materials processed for machine {machine_name}'}), 200
