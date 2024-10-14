@@ -1,0 +1,32 @@
+from RPiMCP23S17.MCP23S17 import MCP23S17
+import time
+
+# Initialize MCP23S17 with all address pins grounded (device_id=0)
+mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)  # Only one MCP23S17
+mcp.open()
+
+# Set pin 0 as output for LED, and pin 8 as input for button
+mcp.setDirection(0, mcp.DIR_OUTPUT)  # LED pin
+mcp.setDirection(8, mcp.DIR_INPUT)   # Button pin
+
+print("LED is ON, waiting for button press...")
+
+try:
+    # Turn the LED on (set pin 0 high)
+    mcp.digitalWrite(0, MCP23S17.LEVEL_HIGH)
+
+    while True:
+        # Check the state of the button (pin 8)
+        button_state = mcp.digitalRead(8)
+
+        if button_state == MCP23S17.LEVEL_LOW:  # Assuming button press pulls the input low
+            print("Button pressed! Turning off LED...")
+            # Turn the LED off
+            mcp.digitalWrite(0, MCP23S17.LEVEL_LOW)
+            break
+
+        time.sleep(0.1)  # Poll every 100ms
+
+finally:
+    mcp.close()
+    print("SPI communication closed.")
