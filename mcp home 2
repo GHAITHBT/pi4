@@ -1,0 +1,40 @@
+from RPiMCP23S17.MCP23S17 import MCP23S17
+import time
+
+# Initialize MCP23S17 with appropriate bus, pin_cs, and device_id
+mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)
+mcp.open()
+
+# Set all pins on Bank A (0-7) as outputs for controlling LEDs
+for pin in range(0, 8):
+    mcp.setDirection(pin, mcp.DIR_OUTPUT)
+
+# Set all pins on Bank B (8-15) as inputs for reading buttons/ground signals
+for pin in range(8, 16):
+    mcp.setDirection(pin, mcp.DIR_INPUT)
+
+# Initially, turn on all LEDs on Bank A
+mcp.writeGPIOA(0xFF)  # Set all pins on Bank A to HIGH (turn on LEDs)
+
+print("All LEDs are ON. Waiting for input on Bank B to turn them off...")
+
+try:
+    while True:
+        # Read the state of Bank B (pins 8-15, mapped as 0-7 in Bank B)
+        input_state = mcp.readGPIOB()
+
+        # Invert the input_state to control the corresponding LEDs
+        # If a pin on Bank B is grounded (LOW), turn off the corresponding LED on Bank A
+        led_state = ~input_state & 0xFF  # Flip the bits and mask to 8 bits
+
+        # Set the LED state on Bank A
+        mcp.writeGPIOA(led_state)
+
+        # Small delay for stability
+        time.sleep(0.1)
+
+except KeyboardInterrupt:
+    # On exit, turn off all LEDs
+    mcp.writeGPIOA(0x00)
+    mcp.close()
+    print("Exiting... All LEDs turned off.")
