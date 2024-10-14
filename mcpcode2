@@ -1,0 +1,23 @@
+import board
+import busio
+from adafruit_mcp230xx.mcp23s17 import MCP23S17
+
+# Initialize SPI communication
+spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+cs_pin = digitalio.DigitalInOut(board.CE0)  # Chip select pin
+
+# Create MCP23S17 object
+mcp = MCP23S17(spi, cs_pin)
+
+# Set pin 0 (GPA0) as output for LED
+mcp.get_pin(0).switch_to_output()
+
+# Set pin 1 (GPA1) as input for Button
+mcp.get_pin(1).switch_to_input(pull_up=True)
+
+# Turn LED on (GPA0)
+mcp.get_pin(0).value = True
+
+# Check button press (GPA1)
+if not mcp.get_pin(1).value:
+    print("Button Pressed!")
