@@ -1,0 +1,30 @@
+from RPiMCP23S17.MCP23S17 import MCP23S17
+import time
+
+# Initialize the MCP23S17 with address 0x00
+mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)
+mcp.open()
+
+# Set all pins as output
+for x in range(0, 16):
+    mcp.setDirection(x, mcp.DIR_OUTPUT)
+
+print("Starting to turn on each pin one at a time (CTRL+C to quit)")
+try:
+    while True:
+        for x in range(0, 16):
+            # Turn on pin x
+            mcp.digitalWrite(x, MCP23S17.LEVEL_HIGH)
+            print(f"Pin {x} is ON")
+            time.sleep(1)  # Keep the pin on for 1 second
+
+            # Turn off pin x
+            mcp.digitalWrite(x, MCP23S17.LEVEL_LOW)
+            print(f"Pin {x} is OFF")
+
+except KeyboardInterrupt:
+    print("Program terminated by user.")
+
+finally:
+    mcp.close()
+    print("SPI communication closed.")
