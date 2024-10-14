@@ -1,40 +1,47 @@
 from RPiMCP23S17.MCP23S17 import MCP23S17
 import time
 
-# Initialize MCP23S17 with appropriate bus, pin_cs, and device_id
+# Initialize MCP23S17
 mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)
 mcp.open()
 
 # Set all pins on Bank A (0-7) as outputs for controlling LEDs
 for pin in range(0, 8):
-    mcp.setDirection(pin, mcp.DIR_OUTPUT)
+    mcp.setDirection(pin, 0)  # 0 for output direction
 
 # Set all pins on Bank B (8-15) as inputs for reading buttons/ground signals
 for pin in range(8, 16):
-    mcp.setDirection(pin, mcp.DIR_INPUT)
+    mcp.setDirection(pin, 1)  # 1 for input direction
+    mcp.setPullupMode(pin, 1)  # Enable pull-up resistors on Bank B pins
 
 # Initially, turn on all LEDs on Bank A
-mcp.writeGPIOA(0xFF)  # Set all pins on Bank A to HIGH (turn on LEDs)
+for pin in range(0, 8):
+    mcp.digitalWrite(pin, 1)  # Set all pins on Bank A to HIGH (turn on LEDs)
 
 print("All LEDs are ON. Waiting for input on Bank B to turn them off...")
 
 try:
     while True:
-        # Read the state of Bank B (pins 8-15, mapped as 0-7 in Bank B)
-        input_state = mcp.readGPIOB()
+        # Loop through each pin on Bank B (8-15)
+        for pin_b in range(8, 16):
+            # Read the state of the pin on Bank B
+            input_state = mcp.digitalRead(pin_b)
 
-        # Invert the input_state to control the corresponding LEDs
-        # If a pin on Bank B is grounded (LOW), turn off the corresponding LED on Bank A
-        led_state = ~input_state & 0xFF  # Flip the bits and mask to 8 bits
+            # Calculate the corresponding pin on Bank A
+            pin_a = pin_b - 8
 
-        # Set the LED state on Bank A
-        mcp.writeGPIOA(led_state)
+            # If the pin on Bank B is LOW (grounded), turn off the corresponding LED on Bank A
+            if input_state == 0:
+                mcp.digitalWrite(pin_a, 0)  # Turn off LED on Bank A
+            else:
+                mcp.digitalWrite(pin_a, 1)  # Keep the LED on Bank A ON
 
         # Small delay for stability
         time.sleep(0.1)
 
 except KeyboardInterrupt:
     # On exit, turn off all LEDs
-    mcp.writeGPIOA(0x00)
+    for pin in range(0, 8):
+        mcp.digitalWrite(pin, 0)
     mcp.close()
     print("Exiting... All LEDs turned off.")
