@@ -1,0 +1,63 @@
+import spidev
+import time
+
+# MCP23S17 SPI commands
+WRITE_CMD = 0x40  # Write command to MCP23S17
+READ_CMD = 0x41   # Read command from MCP23S17
+
+IODIRA = 0x00  # I/O direction register A
+IODIRB = 0x01  # I/O direction register B
+GPIOA = 0x12   # GPIO register A
+GPIOB = 0x13   # GPIO register B
+OLATA = 0x14   # Output latch register A
+
+# Initialize SPI
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Open SPI bus 0, chip select 0
+spi.max_speed_hz = 1000000  # Set SPI speed to 1 MHz
+
+# MCP23S17 address is 0x00 when A0, A1, A2 are grounded
+MCP23S17_ADDRESS = 0x00
+
+def write_register(register, value):
+    """ Write a value to a register """
+    spi.xfer([WRITE_CMD | (MCP23S17_ADDRESS << 1), register, value])
+
+def read_register(register):
+    """ Read a value from a register """
+    return spi.xfer([READ_CMD | (MCP23S17_ADDRESS << 1), register, 0])[2]
+
+def setup():
+    """ Initialize MCP23S17 and set pin directions """
+    # Set all of GPIOA pins to output (for LED control)
+    write_register(IODIRA, 0x00)
+    # Set all of GPIOB pins to input (for button input)
+    write_register(IODIRB, 0xFF)
+
+def turn_on_led():
+    """ Turn on LED connected to GPIOA0 """
+    write_register(OLATA, 0x01)  # Set GPIOA0 high (turn on LED)
+
+def turn_off_led():
+    """ Turn off LED connected to GPIOA0 """
+    write_register(OLATA, 0x00)  # Set GPIOA0 low (turn off LED)
+
+def is_button_pressed():
+    """ Check if the button on GPIOB0 is pressed """
+    return read_register(GPIOB) & 0x01 == 0  # Check if GPIOB0 is low (button pressed)
+
+# Main logic
+setup()
+turn_on_led()
+print("LED is ON, waiting for button press to turn it off...")
+
+try:
+    while True:
+        if is_button_pressed():
+            print("Button pressed! Turning off LED...")
+            turn_off_led()
+            break
+        time.sleep(0.1)  # Poll button every 100ms
+finally:
+    spi.close()
+    print("SPI communication closed.")
