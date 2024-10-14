@@ -1,0 +1,39 @@
+from RPIMCP23S17 import MCP23S17
+import time
+
+# Define SPI bus and device address
+SPI_PORT = 0
+SPI_DEVICE = 0
+
+# Create MCP23S17 instance with address 0x20 (all address pins grounded)
+mcp = MCP23S17(address=0x20, bus=SPI_PORT, device=SPI_DEVICE)
+
+# Set Bank A (Port A) as output for controlling LEDs
+mcp.setDirection('A', 0b00000000)  # All pins of Bank A as outputs
+
+# Set Bank B (Port B) as input to read the buttons/ground signals
+mcp.setDirection('B', 0b11111111)  # All pins of Bank B as inputs
+
+# Initially, turn all LEDs ON (set all Bank A pins high)
+mcp.output('A', 0b11111111)
+
+try:
+    while True:
+        # Read the state of all pins from Bank B
+        input_state = mcp.input('B')
+        
+        # Invert input_state for controlling LEDs (LOW input turns off the LED)
+        # The output state on Bank A should reflect the opposite of Bank B
+        output_state = ~input_state & 0xFF  # Flip bits and mask to 8 bits
+        
+        # Set the output state of Bank A (controls the LEDs)
+        mcp.output('A', output_state)
+        
+        # Add a small delay to debounce and avoid overloading the CPU
+        time.sleep(0.1)
+
+except KeyboardInterrupt:
+    # Graceful exit, turn off all LEDs before exiting
+    mcp.output('A', 0b00000000)
+    mcp.close()
+    print("Exiting... All LEDs turned off.")
