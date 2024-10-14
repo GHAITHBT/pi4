@@ -1,0 +1,38 @@
+from RPiMCP23S17.MCP23S17 import MCP23S17
+import time
+
+# Initialize the MCP23S17 with address 0x00
+mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)
+mcp.open()
+
+# Set GPA7 as output for the LED
+mcp.setDirection(7, mcp.DIR_OUTPUT)
+
+# Set GPB0 as input for the button
+mcp.setDirection(8, mcp.DIR_INPUT)  # GPB0 is pin 8 on the MCP23S17
+
+print("Starting LED control with button press (CTRL+C to quit)")
+try:
+    # Turn on the LED connected to GPA7
+    mcp.digitalWrite(7, MCP23S17.LEVEL_HIGH)
+    print("LED on GPA7 is ON")
+
+    while True:
+        # Read the state of the button
+        button_state = mcp.digitalRead(8)
+
+        if button_state == MCP23S17.LEVEL_LOW:  # Button is pressed (grounded)
+            mcp.digitalWrite(7, MCP23S17.LEVEL_LOW)  # Turn off the LED
+            print("Button pressed! LED on GPA7 is OFF")
+            # Wait until the button is released
+            while mcp.digitalRead(8) == MCP23S17.LEVEL_LOW:
+                time.sleep(0.1)  # Polling delay for button release
+
+        time.sleep(0.1)  # Polling delay to reduce CPU usage
+
+except KeyboardInterrupt:
+    print("Program terminated by user.")
+
+finally:
+    mcp.close()
+    print("SPI communication closed.")
