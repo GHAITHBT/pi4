@@ -1,0 +1,36 @@
+import time
+import board
+import busio
+import digitalio
+import adafruit_mcp230xx
+
+# Initialize SPI bus
+spi = busio.SPI(board.SCK, board.MOSI, board.MISO)
+
+# Create an instance of the MCP23S17 using the SPI interface
+cs = digitalio.DigitalInOut(board.D5)  # Select the chip select pin (adjust this based on your wiring)
+mcp = adafruit_mcp230xx.MCP23S17_SPI(spi, cs)
+
+# Set up a pin for the LED (pin 0 on MCP23S17) and a pin for the button (pin 1 on MCP23S17)
+led_pin = mcp.get_pin(0)
+button_pin = mcp.get_pin(1)
+
+# Set LED pin as an output and button pin as an input with a pull-up resistor
+led_pin.direction = digitalio.Direction.OUTPUT
+button_pin.direction = digitalio.Direction.INPUT
+button_pin.pull = digitalio.Pull.UP  # Assuming the button is active-low (pressing connects to ground)
+
+# Turn on the LED
+led_pin.value = True
+print("LED is ON, waiting for button press to turn it off...")
+
+try:
+    while True:
+        # Check if the button is pressed
+        if not button_pin.value:  # Button pressed (active-low)
+            print("Button pressed! Turning off LED...")
+            led_pin.value = False  # Turn off the LED
+            break
+        time.sleep(0.1)  # Debounce delay (100ms)
+finally:
+    print("Script finished.")
