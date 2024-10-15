@@ -7,22 +7,18 @@ mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)
 # Open the MCP device
 mcp.open()
 
-# Set all GPIO pins (0-15) as outputs and turn them off
-for pin in range(0, 16):
-    mcp.setDirection(pin, MCP23S17.DIR_OUTPUT)  # Set all pins as outputs
-    mcp.digitalWrite(pin, MCP23S17.LEVEL_LOW)   # Turn off all pins initially
-
 # Set GPIOA7 as output (for LED) and GPIOB7 as input (for ground detection)
 mcp.setDirection(7, MCP23S17.DIR_OUTPUT)  # Set GPIOA7 as output (LED)
 mcp.setDirection(15, MCP23S17.DIR_INPUT)   # Set GPIOB7 as input (ground detection)
 
-# Enable pull-up mode for GPIOB7
-mcp.setPullupMode(15, MCP23S17.PULLUP_ENABLED)  # Enable pull-up for GPIOB7
+# Turn off all GPIO pins initially
+for pin in range(0, 16):
+    mcp.digitalWrite(pin, MCP23S17.LEVEL_LOW)
 
 # Turn on the LED connected to GPIOA7
 mcp.digitalWrite(7, MCP23S17.LEVEL_HIGH)  # Set GPIOA7 high to turn on the LED
 
-print("LED on GPIOA7 is ON. Apply ground to GPIOB7 to turn it OFF.")
+print("LED on GPIOA7 is ON. Press button to connect GPIOB7 to ground and turn off the LED.")
 
 try:
     while True:
