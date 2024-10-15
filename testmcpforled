@@ -1,0 +1,62 @@
+import spidev
+import time
+
+# MCP23S17 registers
+IODIRA = 0x00   # I/O direction A
+IODIRB = 0x01   # I/O direction B
+GPIOA = 0x12    # GPIO A
+GPIOB = 0x13    # GPIO B
+OLATA = 0x14    # Output latch A
+OLATB = 0x15    # Output latch B
+
+# MCP23S17 Opcode
+MCP23S17_WRITE = 0x40
+MCP23S17_READ = 0x41
+
+# Initialize SPI
+spi = spidev.SpiDev()
+spi.open(0, 0)   # Open SPI bus 0, device (CS) 0
+spi.max_speed_hz = 1000000  # Set SPI speed to 1MHz
+
+# Set all pins on bank A and B to outputs
+def init_mcp23s17():
+    # Write to IODIRA and IODIRB (set all pins as outputs)
+    spi.xfer2([MCP23S17_WRITE, IODIRA, 0x00])  # All A pins as output
+    spi.xfer2([MCP23S17_WRITE, IODIRB, 0x00])  # All B pins as output
+
+# Set GPIOA pins
+def write_gpioa(value):
+    spi.xfer2([MCP23S17_WRITE, OLATA, value])
+
+# Set GPIOB pins
+def write_gpiob(value):
+    spi.xfer2([MCP23S17_WRITE, OLATB, value])
+
+# Read GPIOA pins
+def read_gpioa():
+    return spi.xfer2([MCP23S17_READ, GPIOA, 0x00])[2]
+
+# Test: turn on all GPIOA LEDs and toggle GPIOB to turn them off
+def toggle_test():
+    print("Turning on all GPIOA LEDs")
+    
+    # Turn on all GPIOA pins to light up LEDs
+    write_gpioa(0xFF)  # Set all GPIOA pins high to turn on LEDs
+    write_gpiob(0xFF)  # Initially set GPIOB pins to high (not connected to ground)
+
+    time.sleep(2)  # Wait for 2 seconds before starting the toggle
+
+    # Now, you can simulate turning off the LEDs by toggling GPIOB
+    for i in range(8):  # Assuming there are 8 GPIOA pins
+        # Turn off the corresponding LED by pulling GPIOB to ground
+        print(f"Turning off LED on GPIOA pin {i}")
+        write_gpiob(0xFF ^ (1 << i))  # Set the i-th GPIOB pin low
+        time.sleep(1)  # Wait for 1 second
+
+        # Turn it back on by setting GPIOB back high
+        write_gpiob(0xFF)  # Reset GPIOB pins to high
+        time.sleep(1)  # Wait for 1 second before next LED
+
+if __name__ == "__main__":
+    init_mcp23s17()
+    toggle_test()
