@@ -50,11 +50,20 @@ def toggle_test():
     for i in range(8):  # Assuming there are 8 GPIOA pins
         # Turn off the corresponding LED by pulling GPIOB to ground
         print(f"Turning off LED on GPIOA pin {i}")
-        write_gpiob(0xFF ^ (1 << i))  # Set the i-th GPIOB pin low
+        
+        # Update GPIOA to turn off the corresponding LED
+        current_state = read_gpioa()  # Read current state of GPIOA
+        new_state = current_state & ~(1 << i)  # Set the i-th GPIOA pin low
+        write_gpioa(new_state)  # Update GPIOA to turn off the LED
+        write_gpiob(0xFF ^ (1 << i))  # Set the i-th GPIOB pin low to ground
+        
         time.sleep(1)  # Wait for 1 second
 
-        # Turn it back on by setting GPIOB back high
+        # Reset GPIOA to turn the LED back on
+        new_state = current_state | (1 << i)  # Set the i-th GPIOA pin high
+        write_gpioa(new_state)  # Update GPIOA to turn the LED back on
         write_gpiob(0xFF)  # Reset GPIOB pins to high
+        
         time.sleep(1)  # Wait for 1 second before next LED
 
 if __name__ == "__main__":
