@@ -2,10 +2,23 @@ import RPi.GPIO as GPIO
 
 # Function to clean up GPIO
 def cleanup_gpio():
-    GPIO.setmode(GPIO.BCM)  # Set GPIO mode
-    GPIO.cleanup()          # Clean up all the GPIO pins
+    # Only call cleanup if there are channels set up
+    if GPIO.gpio_function(18) != GPIO.UNKNOWN:  # Check a specific pin or adjust based on your setup
+        GPIO.cleanup()  # Clean up all the GPIO pins
 
 if __name__ == "__main__":
-    print("Cleaning up all GPIO pins...")
-    cleanup_gpio()
-    print("GPIO cleanup complete.")
+    GPIO.setmode(GPIO.BCM)  # Set GPIO mode
+    
+    try:
+        # Your GPIO setup code goes here
+        # For example: GPIO.setup(18, GPIO.OUT)
+
+        print("Performing operations with GPIO pins...")
+        # Your main code logic here
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+    finally:
+        print("Cleaning up all GPIO pins...")
+        cleanup_gpio()
+        print("GPIO cleanup complete.")
