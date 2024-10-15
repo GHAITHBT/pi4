@@ -19,13 +19,13 @@ mcp.setDirection(15, MCP23S17.DIR_INPUT)   # Set GPIOB7 as input (ground detecti
 # Turn on the LED connected to GPIOA7
 mcp.digitalWrite(7, MCP23S17.LEVEL_HIGH)  # Set GPIOA7 high to turn on the LED
 
-print("LED on GPIOA7 is ON. Ground GPIOB7 to turn it OFF.")
+print("LED on GPIOA7 is ON. Apply high to GPIOB7 to turn it OFF.")
 
 try:
     while True:
-        # Read GPIOB to check if GPIOB7 is grounded
-        if mcp.digitalRead(15) == MCP23S17.LEVEL_LOW:  # Check if GPIOB7 is low (grounded)
-            print("GPIOB7 is grounded, turning off LED on GPIOA7")
+        # Read GPIOB to check if GPIOB7 is high
+        if mcp.digitalRead(15) == MCP23S17.LEVEL_HIGH:  # Check if GPIOB7 is high
+            print("GPIOB7 is HIGH, turning off LED on GPIOA7")
             mcp.digitalWrite(7, MCP23S17.LEVEL_LOW)  # Set GPIOA7 low to turn off the LED
             break  # Exit the loop after turning off the LED
 
