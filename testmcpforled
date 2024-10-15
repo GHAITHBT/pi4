@@ -21,8 +21,8 @@ spi.max_speed_hz = 1000000  # Set SPI speed to 1MHz
 # Set all pins on bank A and B to outputs
 def init_mcp23s17():
     # Write to IODIRA and IODIRB (set all pins as outputs)
-    spi.xfer2([MCP23S17_WRITE, IODIRA, 0x00])  # All A pins as output
-    spi.xfer2([MCP23S17_WRITE, IODIRB, 0x00])  # All B pins as output
+    spi.xfer2([MCP23S17_WRITE, IODIRA, 0x80])  # Set GPIOA7 as output, others as inputs (0)
+    spi.xfer2([MCP23S17_WRITE, IODIRB, 0x00])  # Set all GPIOB pins as inputs
 
 # Set GPIOA pins
 def write_gpioa(value):
@@ -32,39 +32,28 @@ def write_gpioa(value):
 def write_gpiob(value):
     spi.xfer2([MCP23S17_WRITE, OLATB, value])
 
-# Read GPIOA pins
-def read_gpioa():
-    return spi.xfer2([MCP23S17_READ, GPIOA, 0x00])[2]
+# Read GPIOB pins
+def read_gpiob():
+    return spi.xfer2([MCP23S17_READ, GPIOB, 0x00])[2]
 
-# Test: turn on all GPIOA LEDs and toggle GPIOB to turn them off
+# Test: turn on LED using GPIOA7 and turn it off using GPIOB7
 def toggle_test():
-    print("Turning on all GPIOA LEDs")
+    print("Turning on LED on GPIOA7")
     
-    # Turn on all GPIOA pins to light up LEDs
-    write_gpioa(0xFF)  # Set all GPIOA pins high to turn on LEDs
-    write_gpiob(0xFF)  # Initially set GPIOB pins to high (not connected to ground)
-
-    time.sleep(2)  # Wait for 2 seconds before starting the toggle
-
-    # Now, you can simulate turning off the LEDs by toggling GPIOB
-    for i in range(8):  # Assuming there are 8 GPIOA pins
-        # Turn off the corresponding LED by pulling GPIOB to ground
-        print(f"Turning off LED on GPIOA pin {i}")
+    # Turn on GPIOA7 to light up the LED
+    write_gpioa(0x80)  # Set GPIOA7 high (0x80 in binary is 10000000)
+    
+    while True:
+        # Read GPIOB to check if GPIOB7 is grounded
+        gpiob_state = read_gpiob()
         
-        # Update GPIOA to turn off the corresponding LED
-        current_state = read_gpioa()  # Read current state of GPIOA
-        new_state = current_state & ~(1 << i)  # Set the i-th GPIOA pin low
-        write_gpioa(new_state)  # Update GPIOA to turn off the LED
-        write_gpiob(0xFF ^ (1 << i))  # Set the i-th GPIOB pin low to ground
-        
-        time.sleep(1)  # Wait for 1 second
-
-        # Reset GPIOA to turn the LED back on
-        new_state = current_state | (1 << i)  # Set the i-th GPIOA pin high
-        write_gpioa(new_state)  # Update GPIOA to turn the LED back on
-        write_gpiob(0xFF)  # Reset GPIOB pins to high
-        
-        time.sleep(1)  # Wait for 1 second before next LED
+        # If GPIOB7 is low (grounded), turn off the LED
+        if gpiob_state & 0x80 == 0:  # Check if GPIOB7 is low (0x80 is 10000000)
+            print("GPIOB7 is grounded, turning off LED on GPIOA7")
+            write_gpioa(0x00)  # Set GPIOA7 low to turn off the LED
+            break  # Exit the loop after turning off the LED
+            
+        time.sleep(0.1)  # Short delay to avoid rapid looping
 
 if __name__ == "__main__":
     init_mcp23s17()
