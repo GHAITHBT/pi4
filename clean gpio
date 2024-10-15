@@ -1,0 +1,11 @@
+import RPi.GPIO as GPIO
+
+# Function to clean up GPIO
+def cleanup_gpio():
+    GPIO.setmode(GPIO.BCM)  # Set GPIO mode
+    GPIO.cleanup()          # Clean up all the GPIO pins
+
+if __name__ == "__main__":
+    print("Cleaning up all GPIO pins...")
+    cleanup_gpio()
+    print("GPIO cleanup complete.")
