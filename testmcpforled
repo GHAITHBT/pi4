@@ -1,60 +1,33 @@
-import spidev
+from RPiMCP23S17.MCP23S17 import MCP23S17
 import time
 
-# MCP23S17 registers
-IODIRA = 0x00   # I/O direction A
-IODIRB = 0x01   # I/O direction B
-GPIOA = 0x12    # GPIO A
-GPIOB = 0x13    # GPIO B
-OLATA = 0x14    # Output latch A
-OLATB = 0x15    # Output latch B
+# Initialize the MCP23S17 device
+mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)
 
-# MCP23S17 Opcode
-MCP23S17_WRITE = 0x40
-MCP23S17_READ = 0x41
+# Open the MCP device
+mcp.open()
 
-# Initialize SPI
-spi = spidev.SpiDev()
-spi.open(0, 0)   # Open SPI bus 0, device (CS) 0
-spi.max_speed_hz = 1000000  # Set SPI speed to 1MHz
+# Set GPIOA7 as output (for LED) and GPIOB7 as input (for ground detection)
+mcp.setDirection(7, MCP23S17.DIR_OUTPUT)  # Set GPIOA7 as output (LED)
+mcp.setDirection(15, MCP23S17.DIR_INPUT)   # Set GPIOB7 as input (ground detection)
 
-# Set all pins on bank A and B to outputs
-def init_mcp23s17():
-    # Write to IODIRA and IODIRB (set all pins as outputs)
-    spi.xfer2([MCP23S17_WRITE, IODIRA, 0x80])  # Set GPIOA7 as output, others as inputs (0)
-    spi.xfer2([MCP23S17_WRITE, IODIRB, 0x00])  # Set all GPIOB pins as inputs
+# Turn on the LED connected to GPIOA7
+mcp.digitalWrite(7, MCP23S17.LEVEL_HIGH)  # Set GPIOA7 high to turn on the LED
 
-# Set GPIOA pins
-def write_gpioa(value):
-    spi.xfer2([MCP23S17_WRITE, OLATA, value])
+print("LED on GPIOA7 is ON. Ground GPIOB7 to turn it OFF.")
 
-# Set GPIOB pins
-def write_gpiob(value):
-    spi.xfer2([MCP23S17_WRITE, OLATB, value])
-
-# Read GPIOB pins
-def read_gpiob():
-    return spi.xfer2([MCP23S17_READ, GPIOB, 0x00])[2]
-
-# Test: turn on LED using GPIOA7 and turn it off using GPIOB7
-def toggle_test():
-    print("Turning on LED on GPIOA7")
-    
-    # Turn on GPIOA7 to light up the LED
-    write_gpioa(0x80)  # Set GPIOA7 high (0x80 in binary is 10000000)
-    
+try:
     while True:
         # Read GPIOB to check if GPIOB7 is grounded
-        gpiob_state = read_gpiob()
-        
-        # If GPIOB7 is low (grounded), turn off the LED
-        if gpiob_state & 0x80 == 0:  # Check if GPIOB7 is low (0x80 is 10000000)
+        if mcp.digitalRead(15) == MCP23S17.LEVEL_LOW:  # Check if GPIOB7 is low (grounded)
             print("GPIOB7 is grounded, turning off LED on GPIOA7")
-            write_gpioa(0x00)  # Set GPIOA7 low to turn off the LED
+            mcp.digitalWrite(7, MCP23S17.LEVEL_LOW)  # Set GPIOA7 low to turn off the LED
             break  # Exit the loop after turning off the LED
-            
-        time.sleep(0.1)  # Short delay to avoid rapid looping
 
-if __name__ == "__main__":
-    init_mcp23s17()
-    toggle_test()
+        time.sleep(0.1)  # Short delay to avoid rapid looping
+except KeyboardInterrupt:
+    print("Program terminated by user.")
+finally:
+    # Clean up: Set GPIOA7 to low and close MCP device
+    mcp.digitalWrite(7, MCP23S17.LEVEL_LOW)  # Ensure the LED is off
+    mcp.close()
