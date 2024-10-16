@@ -1,0 +1,62 @@
+import spidev
+import time
+
+# MCP23S17 Registers
+IODIRA = 0x00  # I/O direction register for GPIOA (0=output, 1=input)
+IODIRB = 0x01  # I/O direction register for GPIOB
+GPIOA = 0x12   # GPIOA register to read/write
+GPIOB = 0x13   # GPIOB register to read from
+OLATA = 0x14   # Output latch register for GPIOA
+
+# SPI setup
+spi = spidev.SpiDev()
+spi.open(0, 0)  # SPI bus 0, chip select 0 (CS0)
+spi.max_speed_hz = 1000000  # 1 MHz
+
+# MCP23S17 Commands
+def write_register(register, value):
+    spi.xfer2([0x40, register, value])  # 0x40 is the address of the MCP23S17 for writing
+
+def read_register(register):
+    result = spi.xfer2([0x41, register, 0x00])  # 0x41 is the address for reading
+    return result[2]
+
+def setup_mcp23s17():
+    # Set GPIOA7 (pin 7 of GPIOA) as output (0) and GPIOB7 (pin 7 of GPIOB) as input (1)
+    write_register(IODIRA, 0b01111111)  # Set GPIOA7 as output
+    write_register(IODIRB, 0b10000000)  # Set GPIOB7 as input
+
+def set_gpioa7_high():
+    # Set GPIOA7 high (bit 7 in OLATA)
+    write_register(OLATA, 0b10000000)  # Set GPIOA7 (pin 7) to high
+    print("GPIOA7 is HIGH")
+
+def wait_for_button_press():
+    print("Waiting for button press on GPIOB7...")
+    while True:
+        gpio_b_state = read_register(GPIOB)
+        if gpio_b_state & 0b10000000:  # Check if GPIOB7 is high (button pressed)
+            print("Button pressed on GPIOB7")
+            break
+        time.sleep(0.1)
+
+def set_gpioa7_low():
+    # Set GPIOA7 low (bit 7 in OLATA)
+    write_register(OLATA, 0b00000000)  # Set GPIOA7 (pin 7) to low
+    print("GPIOA7 is LOW")
+
+try:
+    # Setup MCP23S17
+    setup_mcp23s17()
+
+    # Set GPIOA7 high
+    set_gpioa7_high()
+
+    # Wait for button press on GPIOB7 to turn off GPIOA7
+    wait_for_button_press()
+
+    # Set GPIOA7 low after button press
+    set_gpioa7_low()
+
+finally:
+    spi.close()
