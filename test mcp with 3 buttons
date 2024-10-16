@@ -1,0 +1,74 @@
+import spidev
+import time
+
+# MCP23S17 Registers
+IODIRA = 0x00  # I/O direction register for GPIOA
+IODIRB = 0x01  # I/O direction register for GPIOB
+GPIOA = 0x12   # GPIOA register to read/write
+GPIOB = 0x13   # GPIOB register to read from
+OLATA = 0x14   # Output latch register for GPIOA
+
+# SPI setup
+spi = spidev.SpiDev()
+spi.open(0, 0)  # SPI bus 0, chip select 0 (CS0)
+spi.max_speed_hz = 1000000  # 1 MHz
+
+# MCP23S17 Commands
+def write_register(register, value):
+    spi.xfer2([0x40, register, value])  # 0x40 is the address of the MCP23S17 for writing
+
+def read_register(register):
+    result = spi.xfer2([0x41, register, 0x00])  # 0x41 is the address for reading
+    return result[2]
+
+def setup_mcp23s17():
+    # Set GPIOA0, GPIOA1, GPIOA2 as outputs and GPIOB0, GPIOB1, GPIOB2 as inputs
+    write_register(IODIRA, 0b11111100)  # Set GPIOA0, A1, A2 as outputs
+    write_register(IODIRB, 0b00000111)  # Set GPIOB0, B1, B2 as inputs (pull-up enabled)
+
+def set_gpio_high(pin):
+    # Set the specified pin high
+    current_state = read_register(OLATA)
+    write_register(OLATA, current_state | (1 << pin))  # Set the specified bit high
+    print(f"GPIOA{pin} is HIGH")
+
+def set_gpio_low(pin):
+    # Set the specified pin low
+    current_state = read_register(OLATA)
+    write_register(OLATA, current_state & ~(1 << pin))  # Clear the specified bit
+    print(f"GPIOA{pin} is LOW")
+
+def wait_for_button_press(button_index):
+    print(f"Waiting for button press on GPIOB{button_index}...")
+    while True:
+        gpio_b_state = read_register(GPIOB)
+        if not (gpio_b_state & (1 << button_index)):  # Check if button at button_index is low
+            print(f"Button pressed on GPIOB{button_index}")
+            break
+        time.sleep(0.1)
+
+try:
+    # Setup MCP23S17
+    setup_mcp23s17()
+
+    led_pins = [0, 1, 2]  # GPIOA0, GPIOA1, GPIOA2
+    button_pins = [0, 1, 2]  # GPIOB0, GPIOB1, GPIOB2
+
+    # Main loop to control LEDs with buttons
+    for i in range(len(led_pins)):
+        # Wait for the corresponding button press
+        wait_for_button_press(button_pins[i])
+
+        # Turn on the corresponding LED
+        set_gpio_high(led_pins[i])
+
+        # Wait for the same button to be pressed again to turn off the LED
+        wait_for_button_press(button_pins[i])
+
+        # Turn off the corresponding LED
+        set_gpio_low(led_pins[i])
+
+    print("All LEDs have been turned on and off in order.")
+
+finally:
+    spi.close()
