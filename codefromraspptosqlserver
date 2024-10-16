@@ -4,8 +4,7 @@ import socket
 import requests
 import time
 import threading
-import mysql.connector
-from mysql.connector import pooling
+import pymssql
 import json
 import subprocess
 import socketio  # Add SocketIO client
@@ -15,23 +14,22 @@ app = Flask(__name__)
 hostname = socket.gethostname()
 sio = socketio.Client()  # Create SocketIO client instance
 
-# Database configuration
+# Database configuration for SQL Server
 db_config = {
-    'host': '10.110.30.15',
+    'server': '10.110.30.15',   # Replace with your SQL Server IP
     'user': 'GhaithBT',
     'password': 'Passw0rd123',
     'database': 'pickbylight'
 }
 
-# Set up database connection pool
-mysql_pool = pooling.MySQLConnectionPool(
-    pool_name="mysql_pool",
-    pool_size=5,
-    **db_config
-)
-
+# Set up the SQL Server database connection pool (pymssql does not natively support connection pooling)
 def get_db_connection():
-    return mysql_pool.get_connection()
+    try:
+        conn = pymssql.connect(**db_config)
+        return conn
+    except pymssql.InterfaceError as err:
+        print(f"Error connecting to SQL Server: {err}")
+        return None
 
 # Get the IP address of the Raspberry Pi
 def get_ip_address():
@@ -70,12 +68,15 @@ def initialize_gpio(config):
     GPIO.setup(status_led_pin, GPIO.OUT)
     GPIO.output(status_led_pin, GPIO.HIGH)
 
-# Fetch configuration from the database
+# Fetch configuration from the SQL Server database
 def fetch_configuration():
     ip_address = get_ip_address()
     connection = get_db_connection()
+    if not connection:
+        return {}
+
     try:
-        cursor = connection.cursor(dictionary=True)
+        cursor = connection.cursor(as_dict=True)
         cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
         config = cursor.fetchone()
         if config:
@@ -84,23 +85,25 @@ def fetch_configuration():
             config['button_pins'] = json.loads(config['button_pins'])
             return config
         return {}
-    except mysql.connector.Error as err:
+    except pymssql.Error as err:
         print(f"Database error: {err}")
         return {}
     finally:
         cursor.close()
         connection.close()
+
 config = fetch_configuration()
 machine_name = config.get('machine_name')
 # Track the LED status for each material
 led_status = {material: False for material in config.get('led_pins', {}).keys()}
+
 # Activate the LEDs for materials one by one, waiting for button press confirmation
 @app.route('/activate_led', methods=['POST'])
 def activate_led():
     data = request.json
     materials = data.get('materials', [])
     machine_name = data.get('machine_name')  # Fetch machine_name from the request
-    
+
     if not materials or not machine_name:
         return jsonify({'error': 'No materials or machine_name provided'}), 400
 
@@ -121,7 +124,7 @@ def activate_led():
 
                     # Send the confirmation back to the server with the machine name
                     try:
-                        response = requests.post(f'http://10.110.10.204:5001/confirmation_material', 
+                        response = requests.post(f'http://10.110.10.204:5001/confirmation_material',
                                                  json={'material': material, 'hostname': hostname, 'machine_name': machine_name})
                         response.raise_for_status()
                     except requests.RequestException as e:
@@ -130,7 +133,7 @@ def activate_led():
         else:
             return jsonify({'error': f'Invalid material: {material}'}), 400
 
-    return jsonify({'status': 'All materials processed for machine {machine_name}'}), 200
+    return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
 
 # Deactivate the specified LED
 @app.route('/deactivate_led', methods=['POST'])
@@ -151,6 +154,7 @@ def verify_leds():
         time.sleep(1)
         GPIO.output(pin, GPIO.LOW)
         time.sleep(0.2)
+
 # Check network connectivity by pinging the server
 def check_network():
     try:
@@ -158,6 +162,7 @@ def check_network():
         return result.returncode == 0
     except Exception:
         return False
+
 # Button callback when pressed
 def button_callback(channel):
     material = [m for m, p in button_pins.items() if p == channel][0]
@@ -166,18 +171,12 @@ def button_callback(channel):
         GPIO.output(led_pins[material], GPIO.LOW)
         led_status[material] = False  # Mark this LED as off
         try:
-            response = requests.post(f'http://10.110.30.15:5001/confirmation_material', json={'material': material, 'hostname': hostname, 'machine_name': machine_name})
+            response = requests.post(f'http://10.110.30.15:5001/confirmation_material',
+                                     json={'material': material, 'hostname': hostname, 'machine_name': machine_name})
             response.raise_for_status()
             print(f"Confirmation sent for {material}.")
         except requests.RequestException as e:
             print(f"Error sending confirmation: {e}")
-# Check network connectivity by pinging the server
-def check_network():
-    try:
-        result = subprocess.run(['ping', '-c', '1', '10.110.10.204'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return result.returncode == 0
-    except Exception:
-        return False
 
 # Blink the status LED a specified number of times
 def blink_status_led(times=3):
@@ -248,23 +247,20 @@ def main():
 
         # Setup button event listeners
         for pin in button_pins.values():
-            GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=200)
+            GPIO.add_event_detect(pin, GPIO.FALLING, callback=button_callback, bouncetime=300)
 
-        # Main loop to check network and handle GPIO status LED
+        # Continuously check network connectivity
         while True:
             if check_network():
-                GPIO.output(status_led_pin, GPIO.HIGH)
-                time.sleep(1)
+                print("Network is reachable.")
             else:
-                GPIO.output(status_led_pin, GPIO.LOW)
-                time.sleep(0.5)
+                print("Network is unreachable.")
+            time.sleep(30)
+
     except KeyboardInterrupt:
-        print("\nExiting...")
+        GPIO.cleanup()
     finally:
-        GPIO.output(status_led_pin, GPIO.LOW)
         GPIO.cleanup()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-
-
