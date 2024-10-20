@@ -1,0 +1,123 @@
+import spidev
+import time
+
+# MCP23S17 Registers
+IODIRA = 0x00  # I/O direction register for GPIOA
+IODIRB = 0x01  # I/O direction register for GPIOB
+GPIOA = 0x12   # GPIOA register to read/write
+GPIOB = 0x13   # GPIOB register to read from
+OLATA = 0x14   # Output latch register for GPIOA
+
+# SPI setup
+spi = spidev.SpiDev()
+
+def setup_spi():
+    try:
+        spi.open(0, 0)  # SPI bus 0, chip select 0 (CS0)
+        spi.max_speed_hz = 1000000  # 1 MHz
+        print("SPI bus initialized successfully.")
+    except Exception as e:
+        print(f"Error initializing SPI: {e}")
+
+# MCP23S17 Commands
+def write_register(register, value):
+    try:
+        spi.xfer2([0x40, register, value])  # 0x40 is the address of the MCP23S17 for writing
+        print(f"Write to register {register:#04x}: {value:#04x}")
+    except Exception as e:
+        print(f"Error writing to register {register:#04x}: {e}")
+
+def read_register(register):
+    try:
+        result = spi.xfer2([0x41, register, 0x00])  # 0x41 is the address for reading
+        print(f"Read from register {register:#04x}: {result[2]:#04x}")
+        return result[2]
+    except Exception as e:
+        print(f"Error reading from register {register:#04x}: {e}")
+        return None
+
+def setup_mcp23s17():
+    print("Setting up MCP23S17...")
+    write_register(IODIRA, 0b00000111)  # Set GPIOA0, A1, A2 as outputs
+    write_register(IODIRB, 0b00000111)  # Set GPIOB5, B6, B7 as inputs
+    print("MCP23S17 setup complete.")
+
+def set_gpio_high(pin):
+    current_state = read_register(OLATA)
+    if current_state is not None:
+        new_state = current_state | (1 << pin)  # Set the specified bit high
+        write_register(OLATA, new_state)
+        print(f"GPIOA{pin} is HIGH")
+    else:
+        print(f"Failed to set GPIOA{pin} HIGH due to read error.")
+
+def set_gpio_low(pin):
+    current_state = read_register(OLATA)
+    if current_state is not None:
+        new_state = current_state & ~(1 << pin)  # Clear the specified bit
+        write_register(OLATA, new_state)
+        print(f"GPIOA{pin} is LOW")
+    else:
+        print(f"Failed to set GPIOA{pin} LOW due to read error.")
+
+def wait_for_button_press(button_index):
+    print(f"Waiting for button press on GPIOB{button_index}...")
+    while True:
+        gpio_b_state = read_register(GPIOB)
+        if gpio_b_state is not None:
+            if not (gpio_b_state & (1 << button_index)):  # Check if button at button_index is low
+                print(f"Button pressed on GPIOB{button_index}")
+                break
+        else:
+            print(f"Failed to read GPIOB state for button {button_index}")
+        time.sleep(0.1)
+
+# Debugging: Check MCP23S17 status after each step
+def test_mcp23s17():
+    print("Testing MCP23S17 communication and pin setup...")
+
+    # Test IODIRA and IODIRB (direction registers)
+    print("Testing IODIRA and IODIRB registers:")
+    iodira = read_register(IODIRA)
+    iodirb = read_register(IODIRB)
+
+    # Test OLATA (output latch A register)
+    print("Testing OLATA register:")
+    olata = read_register(OLATA)
+
+    # Test GPIOB (input state)
+    print("Testing GPIOB register (button inputs):")
+    gpiob = read_register(GPIOB)
+
+try:
+    # Initialize SPI
+    setup_spi()
+
+    # Setup MCP23S17
+    setup_mcp23s17()
+
+    # Test the initial state of MCP23S17
+    test_mcp23s17()
+
+    led_pins = [0, 1, 2]  # GPIOA0, GPIOA1, GPIOA2
+    button_pins = [5, 6, 7]  # GPIOB5, GPIOB6, GPIOB7
+
+    # Main loop to control LEDs with buttons
+    for i in range(len(led_pins)):
+        # Wait for the corresponding button press
+        wait_for_button_press(button_pins[i])
+
+        # Turn on the corresponding LED
+        set_gpio_high(led_pins[i])
+
+        # Wait for the same button to be pressed again to turn off the LED
+        wait_for_button_press(button_pins[i])
+
+        # Turn off the corresponding LED
+        set_gpio_low(led_pins[i])
+
+    print("All LEDs have been turned on and off in order.")
+
+finally:
+    spi.close()
+    print("SPI connection closed.")
