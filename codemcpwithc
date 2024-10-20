@@ -1,0 +1,101 @@
+sudo apt-get install wiringpi
+
+
+gpio -v
+
+
+
+#include <stdio.h>
+#include <wiringPi.h>
+#include <wiringPiSPI.h>
+
+#define SPI_CHANNEL 0  // SPI Channel (CS0)
+#define SPI_SPEED   1000000  // 1 MHz
+
+// MCP23S17 Commands
+#define WRITE_CMD  0x40  // MCP23S17 address for writing (A2,A1,A0 set to 0)
+#define READ_CMD   0x41  // MCP23S17 address for reading
+
+// MCP23S17 Registers
+#define IODIRA  0x00  // I/O Direction Register A
+#define IODIRB  0x01  // I/O Direction Register B
+#define GPIOA   0x12  // GPIO Register A
+#define GPIOB   0x13  // GPIO Register B
+#define OLATA   0x14  // Output Latch A
+
+// Write to MCP23S17 Register
+void writeRegister(int reg, int value) {
+    unsigned char data[3];
+    data[0] = WRITE_CMD;  // Address and write command
+    data[1] = reg;        // Register address
+    data[2] = value;      // Data to write
+    wiringPiSPIDataRW(SPI_CHANNEL, data, 3);  // Send data
+}
+
+// Read from MCP23S17 Register
+unsigned char readRegister(int reg) {
+    unsigned char data[3];
+    data[0] = READ_CMD;   // Address and read command
+    data[1] = reg;        // Register address
+    data[2] = 0x00;       // Placeholder for the response
+    wiringPiSPIDataRW(SPI_CHANNEL, data, 3);  // Send command and read data
+    return data[2];       // Return the read value
+}
+
+// Setup MCP23S17 I/O direction
+void setupMCP23S17() {
+    writeRegister(IODIRA, 0xF8);  // Set GPIOA0, GPIOA1, GPIOA2 as outputs
+    writeRegister(IODIRB, 0xF8);  // Set GPIOB5, GPIOB6, GPIOB7 as inputs
+}
+
+// Set specific pin high on GPIOA
+void setGPIOHigh(int pin) {
+    unsigned char current = readRegister(OLATA);  // Get current state
+    writeRegister(OLATA, current | (1 << pin));   // Set the bit high
+}
+
+// Set specific pin low on GPIOA
+void setGPIOLow(int pin) {
+    unsigned char current = readRegister(OLATA);  // Get current state
+    writeRegister(OLATA, current & ~(1 << pin));  // Clear the bit
+}
+
+int main() {
+    // Initialize WiringPi and SPI
+    if (wiringPiSetup() == -1) {
+        printf("Failed to initialize WiringPi\n");
+        return 1;
+    }
+    
+    if (wiringPiSPISetup(SPI_CHANNEL, SPI_SPEED) == -1) {
+        printf("Failed to initialize SPI\n");
+        return 1;
+    }
+
+    // Setup MCP23S17
+    setupMCP23S17();
+
+    // Main loop to toggle GPIOA pins
+    while (1) {
+        printf("Setting GPIOA0 high...\n");
+        setGPIOHigh(0);  // Turn GPIOA0 on
+        delay(1000);     // Wait for 1 second
+
+        printf("Setting GPIOA0 low...\n");
+        setGPIOLow(0);   // Turn GPIOA0 off
+        delay(1000);     // Wait for 1 second
+    }
+
+    return 0;
+}
+
+
+
+
+gcc -o mcp23s17_control mcp23s17_control.c -lwiringPi
+
+
+
+
+
+sudo ./mcp23s17_control
