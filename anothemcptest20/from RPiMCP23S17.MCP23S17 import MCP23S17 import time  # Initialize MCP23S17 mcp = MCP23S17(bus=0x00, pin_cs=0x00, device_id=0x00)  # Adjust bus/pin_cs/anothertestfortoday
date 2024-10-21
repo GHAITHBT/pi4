@@ -1,0 +1,85 @@
+import spidev
+import RPi.GPIO as GPIO
+import time
+
+# MCP23S17 Registers
+IODIRA = 0x00  # Controls direction of A pins
+IODIRB = 0x01  # Controls direction of B pins
+GPIOA = 0x12   # Register to read/write A pins
+GPIOB = 0x13   # Register to read/write B pins
+OLATB = 0x15   # Register to control output latch for B pins
+
+# MCP23S17 Addresses (A0, A1, A2 wiring to define address)
+MCP1_ADDRESS = 0x20  # All address pins (A0, A1, A2) are connected to ground
+MCP2_ADDRESS = 0x21  # A0 connected to VDD, A1 and A2 to ground
+
+# Initialize SPI
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Open SPI bus 0, chip select CE0
+spi.max_speed_hz = 1000000  # 1 MHz
+
+# Set up GPIO for button handling
+GPIO.setmode(GPIO.BCM)
+
+# MCP23S17 Button Pins (GPIOA0)
+BUTTON_PIN_MCP1 = 17  # Physical button for MCP1 (GPIOA0 connected)
+BUTTON_PIN_MCP2 = 27  # Physical button for MCP2 (GPIOA0 connected)
+GPIO.setup(BUTTON_PIN_MCP1, GPIO.IN, pull_up_down=GPIO.PUD_UP)  # Button connected to VDD through 10k, pulls LOW when pressed
+GPIO.setup(BUTTON_PIN_MCP2, GPIO.IN, pull_up_down=GPIO.PUD_UP)
+
+# Write to MCP23S17 for the specific chip
+def write_register(chip_address, register, value):
+    spi.xfer2([chip_address << 1, register, value])
+
+# Read from MCP23S17 for the specific chip
+def read_register(chip_address, register):
+    return spi.xfer2([(chip_address << 1) | 1, register, 0x00])[2]
+
+# Initialize MCP23S17
+def init_mcp(chip_address):
+    write_register(chip_address, IODIRA, 0x01)  # Set GPIOA0 as input (button pin)
+    write_register(chip_address, IODIRB, 0x00)  # Set all GPIOB pins as output (LED pin)
+
+# Turn on the LED connected to GPIOB7 of a specific MCP
+def turn_on_led(chip_address):
+    write_register(chip_address, GPIOB, 0x80)  # Set GPIOB7 to HIGH (assuming active low LED)
+
+# Turn off the LED connected to GPIOB7 of a specific MCP
+def turn_off_led(chip_address):
+    write_register(chip_address, GPIOB, 0x00)  # Set GPIOB7 to LOW
+
+# Check if the button on GPIOA0 is pressed for a specific MCP
+def is_button_pressed(physical_button_pin):
+    return GPIO.input(physical_button_pin) == GPIO.LOW  # Check if button connected to physical pin is LOW
+
+# Main control logic
+def control_leds():
+    # Initialize both MCP chips
+    init_mcp(MCP1_ADDRESS)
+    init_mcp(MCP2_ADDRESS)
+
+    while True:
+        # Check Button on MCP1
+        if is_button_pressed(BUTTON_PIN_MCP1):  # Physical button connected to MCP1
+            turn_off_led(MCP1_ADDRESS)  # Turn off LED on MCP1
+        else:
+            turn_on_led(MCP1_ADDRESS)  # Turn on LED on MCP1
+
+        # Check Button on MCP2
+        if is_button_pressed(BUTTON_PIN_MCP2):  # Physical button connected to MCP2
+            turn_off_led(MCP2_ADDRESS)  # Turn off LED on MCP2
+        else:
+            turn_on_led(MCP2_ADDRESS)  # Turn on LED on MCP2
+
+        time.sleep(0.1)  # Small delay for debouncing
+
+# Clean up SPI and GPIO on exit
+def cleanup():
+    spi.close()
+    GPIO.cleanup()
+
+if __name__ == "__main__":
+    try:
+        control_leds()
+    except KeyboardInterrupt:
+        cleanup()
