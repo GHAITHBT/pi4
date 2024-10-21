@@ -1,0 +1,52 @@
+import time
+from RPiMCP23S17 import MCP23S17
+
+# Initialize MCP1 and MCP2
+mcp1 = MCP23S17.MCP23S17(device_id=0x00)  # First MCP
+mcp2 = MCP23S17.MCP23S17(device_id=0x01)  # Second MCP
+
+# Open both devices
+mcp1.open()
+mcp2.open()
+
+# Configure MCP1:
+# Set GPA0 as input with pull-up for button
+mcp1.setDirection(0, MCP23S17.DIR_INPUT)
+mcp1.setPullupMode(0, MCP23S17.PULLUP_ENABLED)
+# Set GPB7 as output for LED
+mcp1.setDirection(7, MCP23S17.DIR_OUTPUT)
+
+# Configure MCP2:
+# Set GPA0 as input with pull-up for button
+mcp2.setDirection(0, MCP23S17.DIR_INPUT)
+mcp2.setPullupMode(0, MCP23S17.PULLUP_ENABLED)
+# Set GPB7 as output for LED
+mcp2.setDirection(7, MCP23S17.DIR_OUTPUT)
+
+print("Press the buttons to control the LEDs (CTRL+C to quit)")
+
+try:
+    while True:
+        # Read button states
+        button1_state = mcp1.digitalRead(0)  # MCP1 button on GPA0
+        button2_state = mcp2.digitalRead(0)  # MCP2 button on GPA0
+
+        # Control LED on MCP1 (GPB7)
+        if button1_state == MCP23S17.LEVEL_LOW:  # Button pressed
+            mcp1.digitalWrite(7, MCP23S17.LEVEL_HIGH)  # Turn on LED
+        else:
+            mcp1.digitalWrite(7, MCP23S17.LEVEL_LOW)  # Turn off LED
+
+        # Control LED on MCP2 (GPB7)
+        if button2_state == MCP23S17.LEVEL_LOW:  # Button pressed
+            mcp2.digitalWrite(7, MCP23S17.LEVEL_HIGH)  # Turn on LED
+        else:
+            mcp2.digitalWrite(7, MCP23S17.LEVEL_LOW)  # Turn off LED
+
+        time.sleep(0.1)  # Small delay to avoid bouncing
+
+except KeyboardInterrupt:
+    # Close both MCPs on exit
+    mcp1.close()
+    mcp2.close()
+    print("Program terminated.")
