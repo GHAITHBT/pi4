@@ -1,0 +1,99 @@
+import spidev
+import time
+
+# MCP23S17 I2C base address
+MCP23S17_BASE_ADDR = 0x20
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction for Bank A
+IODIRB = 0x01  # I/O direction for Bank B
+GPPUA = 0x0C   # Pull-up resistors for Bank A
+GPIOA = 0x12   # GPIO register for Bank A (inputs)
+GPIOB = 0x13   # GPIO register for Bank B (outputs)
+
+# Chip addresses based on A0, A1, A2 configuration
+chip_addresses = [
+    MCP23S17_BASE_ADDR,     # Chip 0: A0, A1, A2 = GND (0x20)
+    MCP23S17_BASE_ADDR + 1, # Chip 1: A0 = VDD, A1, A2 = GND (0x21)
+    MCP23S17_BASE_ADDR + 2, # Chip 2: A1 = VDD, A0, A2 = GND (0x22)
+    MCP23S17_BASE_ADDR + 3  # Chip 3: A2 = VDD, A0, A1 = GND (0x23)
+]
+
+# SPI configuration
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Open SPI bus 0, device 0 (CS0)
+spi.max_speed_hz = 1000000  # 1 MHz speed
+
+# Helper functions to write and read from MCP23S17
+def write_register(chip, register, value):
+    spi.xfer2([chip, register, value])  # Write operation to specific chip
+
+def read_register(chip, register):
+    return spi.xfer2([chip | 0x01, register, 0x00])[2]  # Read operation from specific chip
+
+# Initialize MCP23S17 for each chip
+for chip in chip_addresses:
+    write_register(chip, IODIRA, 0xFF)  # Set all A pins as inputs
+    write_register(chip, IODIRB, 0x00)  # Set all B pins as outputs (for LEDs)
+    write_register(chip, GPPUA, 0xFF)   # Enable pull-up resistors on A pins
+
+# Initialize LED state (all on initially)
+led_states = [0xFF, 0xFF, 0xFF, 0xFF]  # LEDs on for all 4 chips
+for i, chip in enumerate(chip_addresses):
+    write_register(chip, GPIOB, led_states[i])  # Set initial LED state (all on)
+
+print("Waiting for button press...")
+
+try:
+    while True:
+        for i, chip in enumerate(chip_addresses):
+            # Read the state of GPIOA (Bank A) pins for buttons
+            gpioa_state = read_register(chip, GPIOA)
+            
+            # Example button and LED mapping for each chip:
+            # Chip 0: GPIOA0 -> GPIOB7, GPIOA1 -> GPIOB6, GPIOA2 -> GPIOB5
+            if chip == chip_addresses[0]:
+                if (gpioa_state & 0x01) == 0:  # Button on GPIOA0 (active low)
+                    led_states[i] &= ~0x80  # Turn off LED on GPIOB7
+                if (gpioa_state & 0x02) == 0:  # Button on GPIOA1 (active low)
+                    led_states[i] &= ~0x40  # Turn off LED on GPIOB6
+                if (gpioa_state & 0x04) == 0:  # Button on GPIOA2 (active low)
+                    led_states[i] &= ~0x20  # Turn off LED on GPIOB5
+
+            # Chip 1: GPIOA0 -> GPIOB7, GPIOA1 -> GPIOB6, GPIOA2 -> GPIOB5
+            elif chip == chip_addresses[1]:
+                if (gpioa_state & 0x01) == 0:  # Button on GPIOA0 (active low)
+                    led_states[i] &= ~0x80  # Turn off LED on GPIOB7
+                if (gpioa_state & 0x02) == 0:  # Button on GPIOA1 (active low)
+                    led_states[i] &= ~0x40  # Turn off LED on GPIOB6
+                if (gpioa_state & 0x04) == 0:  # Button on GPIOA2 (active low)
+                    led_states[i] &= ~0x20  # Turn off LED on GPIOB5
+
+            # Chip 2: GPIOA0 -> GPIOB7, GPIOA1 -> GPIOB6, GPIOA2 -> GPIOB5
+            elif chip == chip_addresses[2]:
+                if (gpioa_state & 0x01) == 0:  # Button on GPIOA0 (active low)
+                    led_states[i] &= ~0x80  # Turn off LED on GPIOB7
+                if (gpioa_state & 0x02) == 0:  # Button on GPIOA1 (active low)
+                    led_states[i] &= ~0x40  # Turn off LED on GPIOB6
+                if (gpioa_state & 0x04) == 0:  # Button on GPIOA2 (active low)
+                    led_states[i] &= ~0x20  # Turn off LED on GPIOB5
+
+            # Chip 3: GPIOA0 -> GPIOB7, GPIOA1 -> GPIOB6, GPIOA2 -> GPIOB5
+            elif chip == chip_addresses[3]:
+                if (gpioa_state & 0x01) == 0:  # Button on GPIOA0 (active low)
+                    led_states[i] &= ~0x80  # Turn off LED on GPIOB7
+                if (gpioa_state & 0x02) == 0:  # Button on GPIOA1 (active low)
+                    led_states[i] &= ~0x40  # Turn off LED on GPIOB6
+                if (gpioa_state & 0x04) == 0:  # Button on GPIOA2 (active low)
+                    led_states[i] &= ~0x20  # Turn off LED on GPIOB5
+
+            # Update the LED state for the current chip
+            write_register(chip, GPIOB, led_states[i])
+
+        time.sleep(0.1)  # Small delay to debounce the buttons
+
+except KeyboardInterrupt:
+    print("Program terminated")
+
+finally:
+    spi.close()
