@@ -1,0 +1,60 @@
+import spidev
+import time
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction for Bank A
+IODIRB = 0x01  # I/O direction for Bank B
+GPPUA = 0x0C   # Pull-up resistors for Bank A
+GPIOA = 0x12   # GPIO register for Bank A (inputs)
+GPIOB = 0x13   # GPIO register for Bank B (outputs)
+
+# SPI configuration
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Open SPI bus 0, device 0 (CS0)
+spi.max_speed_hz = 1000000  # 1 MHz speed
+
+# Helper functions to write and read from MCP23S17
+def write_register(register, value):
+    spi.xfer2([0x40, register, value])  # Write operation
+
+def read_register(register):
+    return spi.xfer2([0x41, register, 0x00])[2]  # Read operation
+
+# Set GPIOA (Bank A) pins as inputs for buttons
+write_register(IODIRA, 0xFF)  # All A pins are inputs (1111 1111)
+
+# Set GPIOB (Bank B) pins as outputs for LEDs
+write_register(IODIRB, 0x00)  # All B pins are outputs (0000 0000)
+
+# Enable pull-up resistors on GPIOA (for all buttons)
+write_register(GPPUA, 0xFF)  # Enable pull-ups on all A pins (1111 1111)
+
+# Initial LED state (all on: LEDs on B7, B6, and B5 are lit)
+led_state = 0xE0  # Binary 1110 0000: B7, B6, and B5 are on
+write_register(GPIOB, led_state)
+
+print("Waiting for button press...")
+
+try:
+    while True:
+        # Read the state of all GPIOA (Bank A) pins
+        gpioa_state = read_register(GPIOA)
+        
+        # Button on GPIOA0 controls LED on GPIOB7
+        if (gpioa_state & 0x01) == 0:  # Check if GPIOA0 is pressed (active low)
+            led_state &= ~0x80  # Turn off LED on GPIOB7
+        # Button on GPIOA1 controls LED on GPIOB6
+        if (gpioa_state & 0x02) == 0:  # Check if GPIOA1 is pressed (active low)
+            led_state &= ~0x40  # Turn off LED on GPIOB6
+        # Button on GPIOA2 controls LED on GPIOB5
+        if (gpioa_state & 0x04) == 0:  # Check if GPIOA2 is pressed (active low)
+            led_state &= ~0x20  # Turn off LED on GPIOB5
+
+        # Write the new LED states to GPIOB (Bank B)
+        write_register(GPIOB, led_state)
+
+        time.sleep(0.1)  # Small delay for button debounce
+except KeyboardInterrupt:
+    print("Program terminated")
+finally:
+    spi.close()
