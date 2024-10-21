@@ -1,0 +1,61 @@
+import spidev
+import time
+import RPi.GPIO as GPIO
+
+# SPI setup
+spi = spidev.SpiDev()
+spi.open(0, 0)  # CE0 is used
+spi.max_speed_hz = 1000000  # 1 MHz
+
+# MCP23S17 registers
+IODIRA = 0x00  # I/O direction register for port A
+IODIRB = 0x01  # I/O direction register for port B
+GPIOA = 0x12  # Port A GPIO register
+GPIOB = 0x13  # Port B GPIO register
+OLATB = 0x15  # Output latch for port B
+
+# MCP23S17 addresses (A0 grounded = 0x20, A0 VDD = 0x21)
+ADDRESS_MCP1 = 0x40  # 0x20 << 1
+ADDRESS_MCP2 = 0x42  # 0x21 << 1
+
+# Set GPIOA0 as input (button) and GPIOB7 as output (LED)
+def init_mcp23s17(address):
+    spi.xfer2([address, IODIRA, 0x01])  # Set GPIOA0 as input, others output
+    spi.xfer2([address, IODIRB, 0x00])  # Set GPIOB as output
+
+# Turn LED on GPIOB7 on
+def turn_on_led(address):
+    spi.xfer2([address, OLATB, 0x80])  # Set GPIOB7 high
+
+# Turn LED off GPIOB7
+def turn_off_led(address):
+    spi.xfer2([address, OLATB, 0x00])  # Set GPIOB7 low
+
+# Check if button (GPIOA0) is pressed
+def is_button_pressed(address):
+    result = spi.xfer2([address, GPIOA, 0x00])
+    return not (result[1] & 0x01)  # Active low button
+
+# Setup GPIO for SPI communication
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(8, GPIO.OUT)  # CE0 pin
+
+# Initialize both MCP23S17 chips
+init_mcp23s17(ADDRESS_MCP1)
+init_mcp23s17(ADDRESS_MCP2)
+
+try:
+    # Turn on LEDs on both chips
+    turn_on_led(ADDRESS_MCP1)
+    turn_on_led(ADDRESS_MCP2)
+
+    while True:
+        if is_button_pressed(ADDRESS_MCP1):  # Check button on MCP1
+            # Turn off LEDs
+            turn_off_led(ADDRESS_MCP1)
+            turn_off_led(ADDRESS_MCP2)
+            break
+        time.sleep(0.1)
+finally:
+    spi.close()
+    GPIO.cleanup()
