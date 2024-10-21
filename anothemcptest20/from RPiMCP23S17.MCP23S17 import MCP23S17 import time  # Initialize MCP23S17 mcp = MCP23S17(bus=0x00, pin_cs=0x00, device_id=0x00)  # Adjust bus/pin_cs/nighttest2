@@ -1,0 +1,36 @@
+if __name__ == '__main__':
+    from RPiMCP23S17 import MCP23S17
+    import time
+
+    # Initialize the first and second MCP23S17
+    mcp1 = MCP23S17.MCP23S17(device_id=0x00)
+    mcp2 = MCP23S17.MCP23S17(device_id=0x01)
+
+    # Open both devices
+    mcp1.open()
+    mcp2.open()
+
+    # Set GPA0 on MCP1 as input with pull-up enabled
+    mcp1.setDirection(0, MCP23S17.DIR_INPUT)
+    mcp1.setPullupMode(0, MCP23S17.PULLUP_ENABLED)
+
+    # Set GPB7 on MCP2 as output
+    mcp2.setDirection(7, MCP23S17.DIR_OUTPUT)
+
+    print("Button press test (CTRL+C to quit)")
+    try:
+        while True:
+            # Read button state (GPA0 on MCP1)
+            button_state = mcp1.digitalRead(0)
+            
+            if button_state == MCP23S17.LEVEL_LOW:  # Button pressed
+                mcp2.digitalWrite(7, MCP23S17.LEVEL_HIGH)  # Turn LED on
+            else:
+                mcp2.digitalWrite(7, MCP23S17.LEVEL_LOW)  # Turn LED off
+                
+            time.sleep(0.1)
+
+    except KeyboardInterrupt:
+        mcp1.close()
+        mcp2.close()
+        print("Program terminated.")
