@@ -1,0 +1,59 @@
+import spidev
+import time
+
+# MCP23S17 constants
+IODIRA = 0x00  # I/O direction for Bank A
+IODIRB = 0x01  # I/O direction for Bank B
+GPPUA = 0x0C   # Pull-up resistors for Bank A
+GPIOA = 0x12   # GPIO register for Bank A
+GPIOB = 0x13   # GPIO register for Bank B
+
+# MCP23S17 device addresses (A0 grounded = 0x20, A0 VDD = 0x21)
+ADDRESS_MCP1 = 0x40  # 0x20 << 1 for write
+ADDRESS_MCP2 = 0x42  # 0x21 << 1 for write
+
+# SPI configuration
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Open SPI bus 0, device 0 (CS0)
+spi.max_speed_hz = 1000000  # Set speed to 1 MHz
+
+# Helper functions to write and read from a specific MCP23S17
+def write_register(address, register, value):
+    spi.xfer2([address, register, value])  # Use address for the correct MCP
+
+def read_register(address, register):
+    return spi.xfer2([address | 0x01, register, 0x00])[2]  # Read from specific MCP
+
+# Set direction for both MCPs: GPIOA0 (pin 0 on Bank A) as input, GPIOB7 (pin 7 on Bank B) as output
+def init_mcp(address):
+    write_register(address, IODIRA, 0xFF)  # Set all A pins as inputs (1111 1111)
+    write_register(address, IODIRB, 0x7F)  # Set pin B7 as output (0111 1111)
+    write_register(address, GPPUA, 0x01)   # Enable pull-up on A0 (0000 0001)
+
+# Initialize both MCPs
+init_mcp(ADDRESS_MCP1)
+init_mcp(ADDRESS_MCP2)
+
+print("Waiting for button press...")
+
+try:
+    while True:
+        # Read the state of GPIOA (Bank A) on MCP1 (Address 0x20)
+        gpioa_state_mcp1 = read_register(ADDRESS_MCP1, GPIOA)
+        
+        # Check if GPIOA0 on MCP1 is low (button pressed)
+        if (gpioa_state_mcp1 & 0x01) == 0:
+            print("Button pressed on MCP1!")
+            # Turn on the LEDs connected to GPIOB7 on both MCPs
+            write_register(ADDRESS_MCP1, GPIOB, 0x80)  # Set bit 7 high (1000 0000) on MCP1
+            write_register(ADDRESS_MCP2, GPIOB, 0x80)  # Set bit 7 high (1000 0000) on MCP2
+        else:
+            # Turn off the LEDs on both MCPs
+            write_register(ADDRESS_MCP1, GPIOB, 0x00)  # Set all bits low (0000 0000) on MCP1
+            write_register(ADDRESS_MCP2, GPIOB, 0x00)  # Set all bits low (0000 0000) on MCP2
+        
+        time.sleep(0.1)  # Small delay for button debounce
+except KeyboardInterrupt:
+    print("Program terminated")
+finally:
+    spi.close()
