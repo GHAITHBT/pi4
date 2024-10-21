@@ -1,0 +1,50 @@
+import spidev
+import time
+
+# MCP23S17 constants
+IODIRA = 0x00  # I/O direction for Bank A
+IODIRB = 0x01  # I/O direction for Bank B
+GPPUA = 0x0C   # Pull-up resistors for Bank A
+GPIOA = 0x12   # GPIO register for Bank A
+GPIOB = 0x13   # GPIO register for Bank B
+
+# SPI configuration
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Open SPI bus 0, device 0 (CS0)
+spi.max_speed_hz = 1000000  # Set speed to 1 MHz
+
+# Helper functions to write and read from MCP23S17
+def write_register(register, value):
+    spi.xfer2([0x40, register, value])  # 0x40 is the MCP23S17 opcode for write
+
+def read_register(register):
+    return spi.xfer2([0x41, register, 0x00])[2]  # 0x41 is the opcode for read
+
+# Set direction: GPIOA0 (pin 0 on Bank A) as input, GPIOB7 (pin 7 on Bank B) as output
+write_register(IODIRA, 0xFF)  # Set all A pins as inputs (1111 1111)
+write_register(IODIRB, 0x7F)  # Set pin B7 as output (0111 1111)
+
+# Enable pull-up resistor on GPIOA0 (pin 0)
+write_register(GPPUA, 0x01)   # Enable pull-up on A0 (0000 0001)
+
+print("Waiting for button press...")
+
+try:
+    while True:
+        # Read the state of GPIOA (Bank A)
+        gpioa_state = read_register(GPIOA)
+        
+        # Check if GPIOA0 is low (button pressed)
+        if (gpioa_state & 0x01) == 0:
+            print("Button pressed!")
+            # Turn on the LED connected to GPIOB7
+            write_register(GPIOB, 0x80)  # Set bit 7 high (1000 0000)
+        else:
+            # Turn off the LED
+            write_register(GPIOB, 0x00)  # Set all bits low (0000 0000)
+        
+        time.sleep(0.1)  # Small delay for button debounce
+except KeyboardInterrupt:
+    print("Program terminated")
+finally:
+    spi.close()
