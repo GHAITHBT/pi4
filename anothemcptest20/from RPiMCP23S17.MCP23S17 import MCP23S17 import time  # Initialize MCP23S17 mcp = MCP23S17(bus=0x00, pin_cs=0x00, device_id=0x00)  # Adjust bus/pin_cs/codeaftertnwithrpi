@@ -1,0 +1,37 @@
+from RPiMCP23S17.MCP23S17 import MCP23S17
+import time
+
+# Initialize MCP23S17
+mcp = MCP23S17(bus=0x00, pin_cs=0x00, device_id=0x00)  # Adjust bus/pin_cs/device_id if needed
+mcp.open()
+
+# Set GPIOB7 (pin 7 on Bank B) as output for LED
+mcp.setDirection(7, mcp.DIR_OUTPUT)
+
+# Set GPIOA0 (pin 0 on Bank A) as input for button
+mcp.setDirection(0, mcp.DIR_INPUT)
+
+# Enable pull-up resistor on GPIOA0, so it defaults to HIGH when the button is not pressed
+mcp.setPullupMode(0, True)
+
+print("Waiting for button press...")
+
+try:
+    while True:
+        # Read the state of the button on GPIOA0
+        button_state = mcp.digitalRead(0)
+        
+        if button_state == MCP23S17.LEVEL_LOW:
+            print("Button pressed!")
+            # Turn on LED on GPIOB7 when the button is pressed
+            mcp.digitalWrite(7, MCP23S17.LEVEL_HIGH)
+        else:
+            # Turn off LED if button is not pressed
+            mcp.digitalWrite(7, MCP23S17.LEVEL_LOW)
+        
+        time.sleep(0.1)  # Small delay to debounce the button
+except KeyboardInterrupt:
+    print("Program terminated")
+
+finally:
+    mcp.close()
