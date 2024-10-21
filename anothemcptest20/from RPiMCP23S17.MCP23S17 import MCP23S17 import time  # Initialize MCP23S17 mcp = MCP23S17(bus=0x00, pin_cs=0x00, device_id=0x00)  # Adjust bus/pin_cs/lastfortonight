@@ -1,0 +1,75 @@
+import spidev
+import time
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction for Bank A
+IODIRB = 0x01  # I/O direction for Bank B
+GPPUA = 0x0C   # Pull-up resistors for Bank A
+GPIOA = 0x12   # GPIO register for Bank A (inputs)
+GPIOB = 0x13   # GPIO register for Bank B (outputs)
+
+# SPI configuration
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Open SPI bus 0, device 0 (MCP1)
+spi.max_speed_hz = 1000000  # 1 MHz speed
+
+# Helper functions to write and read from MCP23S17
+def write_register(mcp, register, value):
+    """Write value to a register on the specified MCP."""
+    spi.xfer2([0x40 | (mcp << 1), register, value])  # Write operation
+
+def read_register(mcp, register):
+    """Read a value from a register on the specified MCP."""
+    return spi.xfer2([0x41 | (mcp << 1), register, 0x00])[2]  # Read operation
+
+# Initialize MCP1
+write_register(0, IODIRA, 0xFF)  # MCP1: All A pins are inputs
+write_register(0, IODIRB, 0x00)  # MCP1: All B pins are outputs
+write_register(0, GPPUA, 0xFF)    # MCP1: Enable pull-ups on all A pins
+
+# Initialize MCP2
+write_register(1, IODIRA, 0x00)  # MCP2: All A pins are inputs (if needed)
+write_register(1, IODIRB, 0x00)  # MCP2: All B pins are outputs
+write_register(1, GPPUA, 0xFF)    # MCP2: Enable pull-ups on all A pins
+
+# Initial LED states for MCP1 and MCP2 (all on: B7, B6, and B5 are lit)
+led_state_mcp1 = 0xE0  # Binary 1110 0000: B7, B6, and B5 on for MCP1
+led_state_mcp2 = 0xE0  # Binary 1110 0000: B7, B6, and B5 on for MCP2
+
+# Write initial LED states
+write_register(0, GPIOB, led_state_mcp1)  # Write to MCP1
+write_register(1, GPIOB, led_state_mcp2)  # Write to MCP2
+
+print("Waiting for button press...")
+
+try:
+    while True:
+        # Read the state of all GPIOA (Bank A) pins for both MCPs
+        gpioa_state_mcp1 = read_register(0, GPIOA)  # Read from MCP1
+        gpioa_state_mcp2 = read_register(1, GPIOA)  # Read from MCP2
+
+        # MCP1 button controls (A0, A1, A2 are GND, always pressed)
+        if (gpioa_state_mcp1 & 0x01) == 0:  # GPIOA0 pressed (active low)
+            led_state_mcp1 &= ~0x80  # Turn off LED on GPIOB7
+        if (gpioa_state_mcp1 & 0x02) == 0:  # GPIOA1 pressed (active low)
+            led_state_mcp1 &= ~0x40  # Turn off LED on GPIOB6
+        if (gpioa_state_mcp1 & 0x04) == 0:  # GPIOA2 pressed (active low)
+            led_state_mcp1 &= ~0x20  # Turn off LED on GPIOB5
+
+        # MCP2 button controls
+        if (gpioa_state_mcp2 & 0x01) == 1:  # GPIOA0 is high (VDD)
+            pass  # Do nothing since A0 is connected to VDD
+        if (gpioa_state_mcp2 & 0x02) == 0:  # GPIOA1 pressed (active low)
+            led_state_mcp2 &= ~0x80  # Turn off LED on GPIOB7
+        if (gpioa_state_mcp2 & 0x04) == 0:  # GPIOA2 pressed (active low)
+            led_state_mcp2 &= ~0x40  # Turn off LED on GPIOB6
+
+        # Write the new LED states to both MCPs
+        write_register(0, GPIOB, led_state_mcp1)  # Write to MCP1
+        write_register(1, GPIOB, led_state_mcp2)  # Write to MCP2
+
+        time.sleep(0.1)  # Small delay for button debounce
+except KeyboardInterrupt:
+    print("Program terminated")
+finally:
+    spi.close()
