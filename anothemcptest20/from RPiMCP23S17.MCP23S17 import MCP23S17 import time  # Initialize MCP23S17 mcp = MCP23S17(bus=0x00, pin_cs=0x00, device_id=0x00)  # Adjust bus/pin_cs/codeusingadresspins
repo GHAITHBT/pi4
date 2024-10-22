@@ -1,0 +1,58 @@
+import spidev
+import time
+
+# MCP23S17 register definitions
+IODIRA = 0x00  # I/O Direction Register A
+IODIRB = 0x01  # I/O Direction Register B
+GPIOA = 0x12   # GPIO Register A
+GPIOB = 0x13   # GPIO Register B
+OLATA = 0x14   # Output Latch Register A
+OLATB = 0x15   # Output Latch Register B
+
+# MCP23S17 addresses
+EXPANDER1_ADDR = 0x20  # Address for the first expander (A0=0, A1=0, A2=0)
+EXPANDER2_ADDR = 0x21  # Address for the second expander (A0=1, A1=0, A2=0)
+
+# SPI setup
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Bus 0, Device 0
+spi.max_speed_hz = 50000
+
+def mcp23s17_init(expander_address):
+    # Set all pins on port A and B to outputs
+    spi.xfer2([expander_address, IODIRA, 0x00])  # All outputs for GPIOA
+    spi.xfer2([expander_address, IODIRB, 0x00])  # All outputs for GPIOB
+
+def mcp23s17_write_pin(expander_address, pin, value):
+    # Write to OLAT register to set pin high/low
+    if pin < 8:
+        reg = OLATA
+    else:
+        reg = OLATB
+        pin -= 8
+
+    # Read the current value of the latch
+    current_value = spi.xfer2([expander_address, reg + 1])[1]
+    if value:
+        current_value |= (1 << pin)  # Set pin high
+    else:
+        current_value &= ~(1 << pin)  # Set pin low
+
+    # Write the new value to the output latch
+    spi.xfer2([expander_address, reg, current_value])
+
+# Initialize both expanders
+mcp23s17_init(EXPANDER1_ADDR)
+mcp23s17_init(EXPANDER2_ADDR)
+
+# Set GPB0 high on both expanders
+try:
+    mcp23s17_write_pin(EXPANDER1_ADDR, 8, 1)  # Set GPB0 high on Expander 1
+    mcp23s17_write_pin(EXPANDER2_ADDR, 8, 1)  # Set GPB0 high on Expander 2
+    print("GPB0 is set high on both expanders.")
+    
+except Exception as e:
+    print(f"An error occurred: {e}")
+
+finally:
+    spi.close()  # Close SPI connection
