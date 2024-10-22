@@ -1,0 +1,76 @@
+import smbus
+import time
+
+# I2C addresses for two MCP23S17 chips
+MCP1_I2C_ADDRESS = 0x20  # A0 = 0, A1 = 0, A2 = 0
+MCP2_I2C_ADDRESS = 0x21  # A0 = 1, A1 = 0, A2 = 0
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction register for port A (GPA)
+IODIRB = 0x01  # I/O direction register for port B (GPB)
+GPIOA = 0x12   # Register for reading GPA
+GPIOB = 0x13   # Register for setting GPB
+GPPUA = 0x0C   # Pull-up register for GPA
+
+# Initialize I2C bus
+bus = smbus.SMBus(1)
+
+# MCP23S17 initialization function (I2C)
+def init_mcp23s17(i2c_address):
+    # Set all GPA pins to input (0xFF) and all GPB pins to output (0x00)
+    bus.write_byte_data(i2c_address, IODIRA, 0xFF)  # Set GPA as input
+    bus.write_byte_data(i2c_address, IODIRB, 0x00)  # Set GPB as output
+    bus.write_byte_data(i2c_address, GPPUA, 0xFF)   # Enable pull-ups on GPA
+
+# Turn on LED on GPB7
+def turn_on_led(i2c_address):
+    bus.write_byte_data(i2c_address, GPIOB, 0x80)  # Set GPB7 high
+
+# Turn off LED on GPB7
+def turn_off_led(i2c_address):
+    bus.write_byte_data(i2c_address, GPIOB, 0x00)  # Set GPB7 low
+
+# Check if button is pressed (GPA0 goes LOW)
+def is_button_pressed(i2c_address):
+    gpa_val = bus.read_byte_data(i2c_address, GPIOA)
+    return not (gpa_val & 0x01)  # Check if bit 0 of GPA is LOW (button press)
+
+# Debounce the button press
+def wait_for_debounced_press(i2c_address):
+    while True:
+        if is_button_pressed(i2c_address):
+            time.sleep(0.05)  # Debounce delay
+            if is_button_pressed(i2c_address):
+                return
+
+# Initialize both MCP23S17 chips
+init_mcp23s17(MCP1_I2C_ADDRESS)  # MCP1
+init_mcp23s17(MCP2_I2C_ADDRESS)  # MCP2
+
+# Step 1: Turn on LED for first MCP23S17
+turn_on_led(MCP1_I2C_ADDRESS)
+print("LED on MCP23S17 #1 turned on, waiting for button press...")
+
+try:
+    # Wait for button press on MCP1
+    wait_for_debounced_press(MCP1_I2C_ADDRESS)
+    print("Button pressed on MCP23S17 #1")
+
+    # Turn off LED on MCP1
+    turn_off_led(MCP1_I2C_ADDRESS)
+
+    # Step 2: Turn on LED for second MCP23S17
+    turn_on_led(MCP2_I2C_ADDRESS)
+    print("LED on MCP23S17 #2 turned on, waiting for button press...")
+
+    # Wait for button press on MCP2
+    wait_for_debounced_press(MCP2_I2C_ADDRESS)
+    print("Button pressed on MCP23S17 #2")
+
+    # Turn off LED on MCP2
+    turn_off_led(MCP2_I2C_ADDRESS)
+
+    print("All buttons pressed, program finished.")
+
+except KeyboardInterrupt:
+    print("Program interrupted, exiting...")
