@@ -1,0 +1,94 @@
+import spidev
+import RPi.GPIO as GPIO
+from time import sleep
+
+# SPI setup for two devices (0,0) and (0,1)
+spi1 = spidev.SpiDev()  # First MCP23S17 on SPI bus 0, chip select 0
+spi2 = spidev.SpiDev()  # Second MCP23S17 on SPI bus 0, chip select 1
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction register for port A
+IODIRB = 0x01  # I/O direction register for port B
+GPIOA = 0x12   # Register for reading GPIOA (input)
+GPIOB = 0x13   # Register for setting GPIOB (output)
+GPPUA = 0x0C   # Register for enabling pull-up resistors on port A
+
+# Initialize SPI devices
+spi1.open(0, 0)  # Open SPI bus 0, device 0
+spi2.open(0, 1)  # Open SPI bus 0, device 1
+
+# Set SPI communication speed
+spi1.max_speed_hz = 1000000  # Set the SPI speed for first chip
+spi2.max_speed_hz = 1000000  # Set the SPI speed for second chip
+
+def write_register(spi, reg, value):
+    """Write to MCP23S17 register"""
+    spi.xfer2([0x40, reg, value])
+
+def read_register(spi, reg):
+    """Read from MCP23S17 register"""
+    result = spi.xfer2([0x41, reg, 0x00])[2]
+    return result
+
+# MCP23S17 initialization function
+def init_mcp23s17(spi):
+    # Set all GPA pins to input (0xFF) and all GPB pins to output (0x00)
+    write_register(spi, IODIRA, 0xFF)  # All GPA as input
+    write_register(spi, IODIRB, 0x00)  # All GPB as output
+    write_register(spi, GPPUA, 0x00)   # Disable internal pull-ups (external 10k used)
+
+# Turn on LED on GPB7
+def turn_on_led(spi):
+    write_register(spi, GPIOB, 0x80)  # Set GPB7 high
+
+# Turn off LED on GPB7
+def turn_off_led(spi):
+    write_register(spi, GPIOB, 0x00)  # Set GPB7 low
+
+# Check if button is pressed (GPA0 goes LOW)
+def is_button_pressed(spi):
+    gpa_val = read_register(spi, GPIOA)
+    return not (gpa_val & 0x01)  # Check if bit 0 of GPA is LOW (button press)
+
+# Add debounce for button press (ensures stable press)
+def wait_for_debounced_press(spi):
+    while True:
+        if is_button_pressed(spi):
+            sleep(0.05)  # Debounce delay
+            if is_button_pressed(spi):  # Check again to confirm it's not noise
+                return
+
+# Initialize both MCP23S17 chips
+init_mcp23s17(spi1)
+init_mcp23s17(spi2)
+
+# Step 1: Turn on LED for first MCP23S17
+turn_on_led(spi1)
+print("LED on MCP23S17 #1 turned on, waiting for button press...")
+
+# Main loop
+try:
+    # Wait for button press on MCP23S17 #1 (button grounds GPA0)
+    wait_for_debounced_press(spi1)
+    print("Button pressed on MCP23S17 #1")
+
+    # Turn off LED on first MCP23S17
+    turn_off_led(spi1)
+    print("LED on MCP23S17 #1 turned off")
+
+    # Turn on LED on second MCP23S17
+    turn_on_led(spi2)
+    print("LED on MCP23S17 #2 turned on, waiting for button press...")
+
+    # Wait for button press on MCP23S17 #2 (button grounds GPA0)
+    wait_for_debounced_press(spi2)
+    print("Button pressed on MCP23S17 #2")
+
+    # Turn off LED on second MCP23S17 and exit
+    turn_off_led(spi2)
+    print("LED on MCP23S17 #2 turned off, exiting program...")
+
+except KeyboardInterrupt:
+    GPIO.cleanup()
+    spi1.close()
+    spi2.close()
