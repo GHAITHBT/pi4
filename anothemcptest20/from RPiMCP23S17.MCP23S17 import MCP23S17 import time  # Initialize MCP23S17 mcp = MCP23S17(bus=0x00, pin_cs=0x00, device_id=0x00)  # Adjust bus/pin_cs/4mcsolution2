@@ -1,0 +1,138 @@
+import spidev
+import RPi.GPIO as GPIO
+from time import sleep
+
+# SPI setup (only using one bus but manually controlling CS)
+spi = spidev.SpiDev()  # Using SPI bus 0 for all MCP23S17 devices
+
+# Define GPIO pins for manual chip select
+CS_PIN_1 = 8   # GPIO 8 for first MCP23S17 chip select
+CS_PIN_2 = 7   # GPIO 7 for second MCP23S17 chip select
+CS_PIN_3 = 25  # GPIO 25 for third MCP23S17 chip select
+CS_PIN_4 = 24  # GPIO 24 for fourth MCP23S17 chip select
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction register for port A
+IODIRB = 0x01  # I/O direction register for port B
+GPIOA = 0x12   # Register for reading GPIOA (input)
+GPIOB = 0x13   # Register for setting GPIOB (output)
+GPPUA = 0x0C   # Register for enabling pull-up resistors on port A
+
+# Initialize SPI device
+spi.open(0, 0)  # Open SPI bus 0
+
+# Set SPI communication speed
+spi.max_speed_hz = 1000000  # Set the SPI speed for all chips
+
+# Setup for MCP chip select (manual GPIO)
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(CS_PIN_1, GPIO.OUT, initial=GPIO.HIGH)
+GPIO.setup(CS_PIN_2, GPIO.OUT, initial=GPIO.HIGH)
+GPIO.setup(CS_PIN_3, GPIO.OUT, initial=GPIO.HIGH)
+GPIO.setup(CS_PIN_4, GPIO.OUT, initial=GPIO.HIGH)
+
+# Manual CS handling for MCP23S17
+def cs_select(cs_pin):
+    GPIO.output(cs_pin, GPIO.LOW)
+
+def cs_deselect(cs_pin):
+    GPIO.output(cs_pin, GPIO.HIGH)
+
+def write_register(spi, reg, value, cs_pin):
+    """Write to MCP23S17 register with manual chip select"""
+    cs_select(cs_pin)
+    spi.xfer2([0x40, reg, value])  # Write command
+    cs_deselect(cs_pin)
+
+def read_register(spi, reg, cs_pin):
+    """Read from MCP23S17 register with manual chip select"""
+    cs_select(cs_pin)
+    result = spi.xfer2([0x41, reg, 0x00])[2]  # Read command
+    cs_deselect(cs_pin)
+    return result
+
+# MCP23S17 initialization function
+def init_mcp23s17(spi, cs_pin):
+    # Set all GPA pins to input (0xFF) and all GPB pins to output (0x00)
+    write_register(spi, IODIRA, 0xFF, cs_pin)  # All GPA as input
+    write_register(spi, IODIRB, 0x00, cs_pin)  # All GPB as output
+    write_register(spi, GPPUA, 0x00, cs_pin)   # Disable internal pull-ups (external 10k used)
+
+# Turn on LED on GPB7
+def turn_on_led(spi, cs_pin):
+    write_register(spi, GPIOB, 0x80, cs_pin)  # Set GPB7 high
+
+# Turn off LED on GPB7
+def turn_off_led(spi, cs_pin):
+    write_register(spi, GPIOB, 0x00, cs_pin)  # Set GPB7 low
+
+# Check if button is pressed (GPA0 goes LOW)
+def is_button_pressed(spi, cs_pin):
+    gpa_val = read_register(spi, GPIOA, cs_pin)
+    return not (gpa_val & 0x01)  # Check if bit 0 of GPA is LOW (button press)
+
+# Add debounce for button press (ensures stable press)
+def wait_for_debounced_press(spi, cs_pin):
+    while True:
+        if is_button_pressed(spi, cs_pin):
+            sleep(0.05)  # Debounce delay
+            if is_button_pressed(spi, cs_pin):  # Check again to confirm it's not noise
+                return
+
+# Initialize all four MCP23S17 chips with manual CS
+init_mcp23s17(spi, CS_PIN_1)  # MCP #1 (manual CS)
+init_mcp23s17(spi, CS_PIN_2)  # MCP #2 (manual CS)
+init_mcp23s17(spi, CS_PIN_3)  # MCP #3 (manual CS)
+init_mcp23s17(spi, CS_PIN_4)  # MCP #4 (manual CS)
+
+# Step 1: Turn on LED for first MCP23S17
+turn_on_led(spi, CS_PIN_1)
+print("LED on MCP23S17 #1 turned on, waiting for button press...")
+
+try:
+    # Wait for button press on MCP23S17 #1
+    wait_for_debounced_press(spi, CS_PIN_1)
+    print("Button pressed on MCP23S17 #1")
+
+    # Turn off LED on first MCP23S17
+    turn_off_led(spi, CS_PIN_1)
+    print("LED on MCP23S17 #1 turned off")
+
+    # Step 2: Turn on LED for second MCP23S17
+    turn_on_led(spi, CS_PIN_2)
+    print("LED on MCP23S17 #2 turned on, waiting for button press...")
+
+    # Wait for button press on MCP23S17 #2
+    wait_for_debounced_press(spi, CS_PIN_2)
+    print("Button pressed on MCP23S17 #2")
+
+    # Turn off LED on second MCP23S17
+    turn_off_led(spi, CS_PIN_2)
+
+    # Step 3: Turn on LED for third MCP23S17
+    turn_on_led(spi, CS_PIN_3)
+    print("LED on MCP23S17 #3 turned on, waiting for button press...")
+
+    # Wait for button press on MCP23S17 #3
+    wait_for_debounced_press(spi, CS_PIN_3)
+    print("Button pressed on MCP23S17 #3")
+
+    # Turn off LED on third MCP23S17
+    turn_off_led(spi, CS_PIN_3)
+
+    # Step 4: Turn on LED for fourth MCP23S17
+    turn_on_led(spi, CS_PIN_4)
+    print("LED on MCP23S17 #4 turned on, waiting for button press...")
+
+    # Wait for button press on MCP23S17 #4
+    wait_for_debounced_press(spi, CS_PIN_4)
+    print("Button pressed on MCP23S17 #4")
+
+    # Turn off LED on fourth MCP23S17
+    turn_off_led(spi, CS_PIN_4)
+
+    print("All buttons pressed, program finished.")
+
+except KeyboardInterrupt:
+    GPIO.cleanup()
+    spi.close()
