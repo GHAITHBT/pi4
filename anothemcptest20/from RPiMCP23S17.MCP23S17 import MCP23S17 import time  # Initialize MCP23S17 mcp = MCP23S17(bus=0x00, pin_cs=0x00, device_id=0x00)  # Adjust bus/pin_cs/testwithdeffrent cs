@@ -1,0 +1,81 @@
+import spidev
+import RPi.GPIO as GPIO
+from time import sleep
+from gpiozero import Button
+
+# SPI setup
+spi = spidev.SpiDev()
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction register for port A
+IODIRB = 0x01  # I/O direction register for port B
+GPIOA = 0x12   # Register for reading GPIOA (input)
+GPIOB = 0x13   # Register for setting GPIOB (output)
+
+# Setup chip select pins
+CS_PIN_1 = 8  # CS for first MCP23S17
+CS_PIN_2 = 7  # CS for second MCP23S17
+GPIO.setmode(GPIO.BCM)
+GPIO.setup(CS_PIN_1, GPIO.OUT, initial=GPIO.HIGH)
+GPIO.setup(CS_PIN_2, GPIO.OUT, initial=GPIO.HIGH)
+
+# Button setup
+button = Button(17)  # GPIO pin for button, adjust as necessary
+
+# Initialize SPI
+spi.open(0, 0)  # Use SPI bus 0
+spi.max_speed_hz = 1000000  # Set the SPI speed
+
+def write_register(cs_pin, reg, value):
+    """Write to MCP23S17 register"""
+    GPIO.output(cs_pin, GPIO.LOW)
+    spi.xfer2([0x40, reg, value])
+    GPIO.output(cs_pin, GPIO.HIGH)
+
+def read_register(cs_pin, reg):
+    """Read from MCP23S17 register"""
+    GPIO.output(cs_pin, GPIO.LOW)
+    result = spi.xfer2([0x41, reg, 0x00])[2]
+    GPIO.output(cs_pin, GPIO.HIGH)
+    return result
+
+# MCP23S17 initialization function
+def init_mcp23s17(cs_pin):
+    # Set all GPA pins to input (0xFF) and all GPB pins to output (0x00)
+    write_register(cs_pin, IODIRA, 0xFF)
+    write_register(cs_pin, IODIRB, 0x00)
+
+# Turn on LED on GPB7
+def turn_on_led(cs_pin):
+    write_register(cs_pin, GPIOB, 0x80)  # Set GPB7 high
+
+# Turn off LED on GPB7
+def turn_off_led(cs_pin):
+    write_register(cs_pin, GPIOB, 0x00)  # Set GPB7 low
+
+# Initialize both MCP23S17 chips
+init_mcp23s17(CS_PIN_1)
+init_mcp23s17(CS_PIN_2)
+
+# Main loop
+try:
+    while True:
+        # Wait for button press on MCP23S17 #1 (GPA0)
+        if button.is_pressed:
+            print("Button pressed on MCP23S17 #1")
+
+            # Turn on LED on first MCP23S17
+            turn_on_led(CS_PIN_1)
+            print("LED on MCP23S17 #1 turned on")
+
+            # Keep second MCP23S17 LED state unchanged
+            # Can also control second LED as needed
+            turn_on_led(CS_PIN_2)
+            print("LED on MCP23S17 #2 remains on")
+
+            # Simple delay to avoid bouncing
+            sleep(0.5)
+
+except KeyboardInterrupt:
+    GPIO.cleanup()
+    spi.close()
