@@ -1,0 +1,196 @@
+from flask import Flask, request, jsonify
+import spidev
+import RPi.GPIO as GPIO
+import socket
+import requests
+import time
+import json
+import threading
+from time import sleep
+import mysql.connector
+from mysql.connector import pooling
+
+app = Flask(__name__)
+
+# SPI setup
+spi = spidev.SpiDev()
+spi.open(0, 0)  # SPI bus 0
+spi.max_speed_hz = 1000000  # Set SPI speed
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction register for port A (buttons)
+IODIRB = 0x01  # I/O direction register for port B (LEDs)
+GPIOA = 0x12   # GPIOA register for button inputs
+GPIOB = 0x13   # GPIOB register for LED outputs
+GPPUA = 0x0C   # Pull-up resistor register for port A
+
+# Database configuration
+db_config = {
+    'host': '10.110.10.204',
+    'user': 'root',
+    'password': 'Passw0rd123',
+    'database': 'PickByLight'
+}
+
+# Initialize the database connection pool
+mysql_pool = pooling.MySQLConnectionPool(pool_name="mysql_pool", pool_size=5, **db_config)
+
+def get_db_connection():
+    return mysql_pool.get_connection()
+
+# Fetch configuration from database
+def fetch_configuration():
+    ip_address = get_ip_address()  # Function to get this Pi's IP
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            # Convert JSON fields to Python dictionaries
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            config['chip_select_pins'] = {
+                1: 5,  # This would be fetched or fixed from the database as well
+                2: 6,
+                3: 25,
+                4: 24
+            }
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+# Manual CS handling
+def cs_select(cs_pin):
+    GPIO.output(cs_pin, GPIO.LOW)
+
+def cs_deselect(cs_pin):
+    GPIO.output(cs_pin, GPIO.HIGH)
+
+def write_register(spi, reg, value, cs_pin):
+    cs_select(cs_pin)
+    spi.xfer2([0x40, reg, value])  # Write command
+    cs_deselect(cs_pin)
+
+def read_register(spi, reg, cs_pin):
+    cs_select(cs_pin)
+    result = spi.xfer2([0x41, reg, 0x00])[2]  # Read command
+    cs_deselect(cs_pin)
+    return result
+
+# MCP23S17 initialization
+def init_mcp23s17(cs_pin):
+    write_register(spi, IODIRA, 0xFF, cs_pin)  # All GPA pins as input (buttons)
+    write_register(spi, IODIRB, 0x00, cs_pin)  # All GPB pins as output (LEDs)
+    write_register(spi, GPPUA, 0xFF, cs_pin)   # Enable pull-ups on GPA (buttons)
+
+# Initialize MCP chips based on configuration
+def initialize_mcp_chips(cs_pins):
+    GPIO.setmode(GPIO.BCM)
+    for cs_pin in cs_pins.values():
+        GPIO.setup(cs_pin, GPIO.OUT, initial=GPIO.HIGH)
+        init_mcp23s17(cs_pin)
+
+# Turn on LED using MCP23S17
+def turn_on_led(material, led_pins, chip_select_pins):
+    if material in led_pins:
+        chip = led_pins[material]['chip']
+        pin = led_pins[material]['pin']
+        cs_pin = chip_select_pins[chip]
+        write_register(spi, GPIOB, 1 << pin, cs_pin)  # Set the corresponding bit
+
+# Turn off LED using MCP23S17
+def turn_off_led(material, led_pins, chip_select_pins):
+    if material in led_pins:
+        chip = led_pins[material]['chip']
+        pin = led_pins[material]['pin']
+        cs_pin = chip_select_pins[chip]
+        write_register(spi, GPIOB, 0 << pin, cs_pin)  # Clear the corresponding bit
+
+# Check if button is pressed (MCP23S17)
+def is_button_pressed(material, button_pins, chip_select_pins):
+    if material in button_pins:
+        chip = button_pins[material]['chip']
+        pin = button_pins[material]['pin']
+        cs_pin = chip_select_pins[chip]
+        gpa_val = read_register(spi, GPIOA, cs_pin)
+        return not (gpa_val & (1 << pin))  # Button press pulls pin LOW
+
+# Wait for button press (with debouncing)
+def wait_for_debounced_press(material, button_pins, chip_select_pins):
+    while True:
+        if is_button_pressed(material, button_pins, chip_select_pins):
+            sleep(0.05)  # Debounce delay
+            if is_button_pressed(material, button_pins, chip_select_pins):
+                return
+
+# Activate LEDs and wait for button press confirmation
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name', '')
+
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+
+    config = fetch_configuration()
+    led_pins = config['led_pins']
+    button_pins = config['button_pins']
+    chip_select_pins = config['chip_select_pins']
+
+    for material in materials:
+        if material in led_pins:
+            turn_on_led(material, led_pins, chip_select_pins)
+            print(f"LED for {material} activated, waiting for confirmation...")
+            wait_for_debounced_press(material, button_pins, chip_select_pins)
+            print(f"Button pressed for {material}, turning off LED.")
+            turn_off_led(material, led_pins, chip_select_pins)
+            # Send confirmation back to the server
+            try:
+                response = requests.post(f'http://10.110.10.204:5001/confirmation_material', 
+                                         json={'material': material, 'hostname': socket.gethostname(), 'machine_name': machine_name})
+                response.raise_for_status()
+            except requests.RequestException as e:
+                print(f"Error sending confirmation for {material}: {e}")
+        else:
+            return jsonify({'error': f'Invalid material: {material}'}), 400
+
+    return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
+
+# Run Flask app in a separate thread
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
+
+# Main loop for the application
+def main():
+    config = fetch_configuration()
+    if not config:
+        print("No configuration found for this Raspberry Pi.")
+        return
+
+    chip_select_pins = config['chip_select_pins']
+
+    # Initialize MCP23S17 chips
+    initialize_mcp_chips(chip_select_pins)
+
+    try:
+        # Start Flask server in a separate thread
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+
+        # Main loop for additional tasks
+        while True:
+            time.sleep(1)  # Placeholder for other loop tasks
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
