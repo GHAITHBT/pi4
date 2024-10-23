@@ -1,35 +1,20 @@
-def fetch_configuration():
-    ip_address = get_ip_address()  # Function to get this Pi's IP
-    connection = get_db_connection()
-    try:
-        cursor = connection.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
-        
-        config = cursor.fetchone()
-        
-        if config:
-            try:
-                # Unescape the JSON strings before loading them
-                config['led_pins'] = json.loads(config['led_pins'].replace('\\"', '"'))
-                config['button_pins'] = json.loads(config['button_pins'].replace('\\"', '"'))
-                config['predefined_materials'] = json.loads(config['predefined_materials'].replace('\\"', '"'))
-            except json.JSONDecodeError as e:
-                print(f"Error decoding JSON: {e}")
-                print(f"Invalid JSON data: {config}")
-                return {}
+Error decoding JSON: Expecting value: line 1 column 43 (char 42)
+Invalid JSON data: {'id': 111, 'machine_name': 'testexcel1', 'led_pins': {'5AS5022LV0010': {'expander': 0, 'pin': 5}, '2ASKNW170000B': {'expander': 0, 'pin': 6}, '3AS0270050041': {'expander': 0, 'pin': 7}}, 'button_pins': ' {"5AS5022LV0010": {"expander": 0, "pin": },\r "2ASKNW170000B": {"expander": 0, "pin": 1},"3AS0270050041": {"expander": 0, "pin": 0}}', 'status_led_pin': 17, 'predefined_materials': '["3AS0200550110", "3AS0200550130", "3AS0200550160"]', 'ip_address': '10.110.20.205'}
+Traceback (most recent call last):
+  File "/home/test/Desktop/testpbl.py", line 215, in <module>
+    main()
+  File "/home/test/Desktop/testpbl.py", line 191, in main
+    config = fetch_configuration()
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/test/Desktop/testpbl.py", line 84, in fetch_configuration
+    cursor.close()
+  File "/usr/local/lib/python3.11/dist-packages/mysql/connector/cursor_cext.py", line 521, in close
+    self._connection.handle_unread_result()
+  File "/usr/local/lib/python3.11/dist-packages/mysql/connector/connection_cext.py", line 1047, in handle_unread_result
+    raise InternalError("Unread result found")
+mysql.connector.errors.InternalError: Unread result found
 
-            config['chip_select_pins'] = {
-                1: 5,
-                2: 6,
-                3: 25,
-                4: 24
-            }
-            return config
-        
-        return {}
-    except mysql.connector.Error as err:
-        print(f"Database error: {err}")
-        return {}
-    finally:
-        cursor.close()
-        connection.close()
+
+------------------
+(program exited with code: 1)
+Press return to continue
