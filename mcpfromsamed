@@ -1,0 +1,204 @@
+import spidev
+import RPi.GPIO as GPIO
+import socket
+import requests
+import time
+import threading
+import mysql.connector
+from mysql.connector import pooling
+import json
+import subprocess
+import socketio
+
+app = Flask(__name__)
+
+hostname = socket.gethostname()
+sio = socketio.Client()  # Create SocketIO client instance
+
+# Database configuration
+db_config = {
+    'host': '10.110.10.204',
+    'user': 'root',
+    'password': 'Passw0rd123',
+    'database': 'PickByLight'
+}
+
+# Set up database connection pool
+mysql_pool = pooling.MySQLConnectionPool(
+    pool_name="mysql_pool",
+    pool_size=5,
+    **db_config
+)
+
+# SPI setup for MCP23S17
+spi = spidev.SpiDev()
+spi.open(0, 0)
+spi.max_speed_hz = 1000000  # Set SPI speed
+
+# GPIO setup for manual chip select
+CS_PINS = [5, 6, 25, 24]  # CS pins for the four MCP23S17 chips
+GPIO.setmode(GPIO.BCM)
+for pin in CS_PINS:
+    GPIO.setup(pin, GPIO.OUT, initial=GPIO.HIGH)
+
+# MCP23S17 register addresses
+IODIRA = 0x00  # I/O direction for port A
+IODIRB = 0x01  # I/O direction for port B
+GPIOA = 0x12   # GPIOA register (input)
+GPIOB = 0x13   # GPIOB register (output)
+GPPUA = 0x0C   # Pull-up resistors enable
+
+# Helper functions for SPI communication
+def cs_select(chip):
+    GPIO.output(CS_PINS[chip], GPIO.LOW)
+
+def cs_deselect(chip):
+    GPIO.output(CS_PINS[chip], GPIO.HIGH)
+
+def write_register(chip, reg, value):
+    """Write to MCP23S17 register."""
+    cs_select(chip)
+    spi.xfer2([0x40, reg, value])
+    cs_deselect(chip)
+
+def read_register(chip, reg):
+    """Read from MCP23S17 register."""
+    cs_select(chip)
+    result = spi.xfer2([0x41, reg, 0x00])[2]
+    cs_deselect(chip)
+    return result
+
+def init_mcp23s17(chip):
+    """Initialize MCP23S17 chip."""
+    write_register(chip, IODIRA, 0xFF)  # Port A as input
+    write_register(chip, IODIRB, 0x00)  # Port B as output
+    write_register(chip, GPPUA, 0x00)   # Disable pull-ups
+
+# Initialize all MCP23S17 chips
+def initialize_gpio(config):
+    for chip in range(4):
+        init_mcp23s17(chip)
+
+# Fetch configuration from the database
+def fetch_configuration():
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+# Helper function to activate an LED
+def turn_on_led(chip, pin):
+    """Turn on LED by setting the appropriate pin on MCP23S17."""
+    write_register(chip, GPIOB, (1 << pin))  # Set specific bit to HIGH
+
+def turn_off_led(chip, pin):
+    """Turn off LED by clearing the appropriate pin on MCP23S17."""
+    write_register(chip, GPIOB, 0x00)  # Set all pins on GPIOB to LOW
+
+def is_button_pressed(chip, pin):
+    """Check if button is pressed on the given chip and pin."""
+    return not (read_register(chip, GPIOA) & (1 << pin))  # Active LOW button press
+
+# Flask route to activate LEDs
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name')
+
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+
+    for material in materials:
+        if material in led_pins:
+            chip = led_pins[material]['chip']
+            pin = led_pins[material]['pin']
+
+            # Turn on the LED for the current material
+            turn_on_led(chip, pin)
+            led_status[material] = True
+            print(f"LED for {material} activated. Waiting for confirmation.")
+
+            # Wait for button press confirmation
+            while True:
+                button_chip = button_pins[material]['chip']
+                button_pin = button_pins[material]['pin']
+
+                if is_button_pressed(button_chip, button_pin):
+                    turn_off_led(chip, pin)
+                    led_status[material] = False
+                    print(f"Confirmation received for {material}.")
+
+                    try:
+                        response = requests.post(
+                            f'http://10.110.10.204:5001/confirmation_material',
+                            json={'material': material, 'hostname': hostname, 'machine_name': machine_name}
+                        )
+                        response.raise_for_status()
+                    except requests.RequestException as e:
+                        print(f"Error sending confirmation for {material}: {e}")
+                    break
+
+    return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
+
+# Flask route to deactivate an LED
+@app.route('/deactivate_led', methods=['POST'])
+def deactivate_led():
+    data = request.json
+    material = data.get('material')
+
+    if material in led_pins:
+        chip = led_pins[material]['chip']
+        pin = led_pins[material]['pin']
+        turn_off_led(chip, pin)
+        led_status[material] = False
+        return jsonify({'status': 'LED deactivated'}), 200
+
+    return jsonify({'error': 'Invalid material'}), 400
+
+# Main function to initialize and run the app
+def main():
+    config = fetch_configuration()
+    if not config:
+        print("No configuration found for this Raspberry Pi.")
+        return
+
+    global led_pins, button_pins, status_led_pin
+    led_pins = config.get('led_pins', {})
+    button_pins = config.get('button_pins', {})
+    status_led_pin = config.get('status_led_pin', 0)
+
+    initialize_gpio(config)
+
+    try:
+        flask_thread = threading.Thread(target=run_flask, daemon=True)
+        flask_thread.start()
+        connect_socketio()
+        verify_leds()
+
+        while True:
+            if check_network():
+                GPIO.output(status_led_pin, GPIO.HIGH)
+            else:
+                GPIO.output(status_led_pin, GPIO.LOW)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Exiting...")
+    finally:
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
