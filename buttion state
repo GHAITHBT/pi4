@@ -79,6 +79,30 @@ def initialize_gpio(config):
         new_output = current_output & ~(1 << pin)
         write_register(expander, OLATB, new_output)  # Turn off LEDs
 
+def verify_leds():
+    """Turn on all LEDs for 2 seconds and then turn them off."""
+    print("Verifying all LEDs...")
+    # Turn on all LEDs
+    for material, led_config in led_pins.items():
+        expander = led_config['chip']
+        pin = led_config['pin']
+        current_output = read_register(expander, OLATB)
+        new_output = current_output | (1 << pin)
+        write_register(expander, OLATB, new_output)
+
+    # Wait for 2 seconds
+    time.sleep(2)
+
+    # Turn off all LEDs
+    for material, led_config in led_pins.items():
+        expander = led_config['chip']
+        pin = led_config['pin']
+        current_output = read_register(expander, OLATB)
+        new_output = current_output & ~(1 << pin)
+        write_register(expander, OLATB, new_output)
+
+    print("LED verification completed.")
+
 def fetch_configuration():
     """Fetch configuration based on the Raspberry Pi's IP address."""
     ip_address = get_ip_address()
@@ -126,8 +150,7 @@ def activate_led():
                 print(f"Button state: {bin(button_state)}")  # Debugging print
 
                 if not (button_state & (1 << button_pin)):  # Button press detected (LOW)
-                    # Debounce: wait for stable LOW state
-                    time.sleep(0.05)
+                    time.sleep(0.05)  # Debounce delay
                     if not (read_register(button_expander, GPIOA) & (1 << button_pin)):
                         print(f"Button pressed for {material}. Turning off LED.")
                         new_output &= ~(1 << pin)  # Turn off the LED
@@ -137,23 +160,6 @@ def activate_led():
             return jsonify({'error': f'Invalid material: {material}'}), 400
 
     return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
-
-@app.route('/deactivate_led', methods=['POST'])
-def deactivate_led():
-    """Deactivate the LED for a given material."""
-    data = request.json
-    material = data.get('material')
-
-    if material in led_pins:
-        expander = led_pins[material]['chip']
-        pin = led_pins[material]['pin']
-
-        current_output = read_register(expander, OLATB)
-        new_output = current_output & ~(1 << pin)  # Turn off the LED
-        write_register(expander, OLATB, new_output)
-        return jsonify({'status': 'LED deactivated'}), 200
-
-    return jsonify({'error': 'Invalid material'}), 400
 
 def get_ip_address():
     """Retrieve the Raspberry Pi's IP address."""
@@ -184,6 +190,9 @@ def main():
     status_led_pin = config.get('status_led_pin', 0)
 
     initialize_gpio(config)
+
+    # Verify LEDs at startup
+    verify_leds()
 
     try:
         app.run(host='0.0.0.0', port=5000)
