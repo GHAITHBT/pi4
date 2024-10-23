@@ -1,34 +1,35 @@
-Traceback (most recent call last):
-  File "/home/test/Desktop/testpbl.py", line 62, in fetch_configuration
-    config['button_pins'] = json.loads(config['button_pins'])
-                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.11/json/__init__.py", line 346, in loads
-    return _default_decoder.decode(s)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.11/json/decoder.py", line 337, in decode
-    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3.11/json/decoder.py", line 355, in raw_decode
-    raise JSONDecodeError("Expecting value", s, err.value) from None
-json.decoder.JSONDecodeError: Expecting value: line 1 column 43 (char 42)
+def fetch_configuration():
+    ip_address = get_ip_address()  # Function to get this Pi's IP
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        
+        config = cursor.fetchone()
+        
+        if config:
+            try:
+                # Unescape the JSON strings before loading them
+                config['led_pins'] = json.loads(config['led_pins'].replace('\\"', '"'))
+                config['button_pins'] = json.loads(config['button_pins'].replace('\\"', '"'))
+                config['predefined_materials'] = json.loads(config['predefined_materials'].replace('\\"', '"'))
+            except json.JSONDecodeError as e:
+                print(f"Error decoding JSON: {e}")
+                print(f"Invalid JSON data: {config}")
+                return {}
 
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "/home/test/Desktop/testpbl.py", line 206, in <module>
-    main()
-  File "/home/test/Desktop/testpbl.py", line 182, in main
-    config = fetch_configuration()
-             ^^^^^^^^^^^^^^^^^^^^^
-  File "/home/test/Desktop/testpbl.py", line 75, in fetch_configuration
-    cursor.close()
-  File "/usr/local/lib/python3.11/dist-packages/mysql/connector/cursor_cext.py", line 521, in close
-    self._connection.handle_unread_result()
-  File "/usr/local/lib/python3.11/dist-packages/mysql/connector/connection_cext.py", line 1047, in handle_unread_result
-    raise InternalError("Unread result found")
-mysql.connector.errors.InternalError: Unread result found
-
-
-------------------
-(program exited with code: 1)
-Press return to continue
+            config['chip_select_pins'] = {
+                1: 5,
+                2: 6,
+                3: 25,
+                4: 24
+            }
+            return config
+        
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
