@@ -1,0 +1,124 @@
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    """Activate LEDs and wait for button press confirmation."""
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name')
+ 
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+ 
+    for material in materials:
+        if material in led_pins:
+            # Retrieve LED pin configuration (GPB7 for LEDs)
+            expander = led_pins[material]['chip']
+            led_pin = led_pins[material]['pin']
+ 
+            # Turn on the LED on GPB7
+            current_output = read_register(expander, OLATB)  # GPIOB output latch
+            new_output = current_output | (1 << led_pin)
+            write_register(expander, OLATB, new_output)
+            print(f"LED for {material} ON (chip {expander}, pin {led_pin}).")
+ 
+            # Retrieve button pin configuration (GPA0 for buttons)
+            button_expander = button_pins[material]['chip']
+            button_pin = button_pins[material]['pin']  # Should be 0 for GPA0
+ 
+            print(f"Monitoring button on chip {button_expander}, pin {button_pin} (GPA0).")
+ 
+            # Monitor for button press on GPA0
+            while True:
+                button_state = read_register(button_expander, GPIOA)  # Read GPIOA
+                print(f"Button state: {bin(button_state)} (chip {button_expander}).")
+ 
+                # Check if the specific button pin (GPA0) is LOW (pressed)
+                mask = (1 << button_pin)  # mask = 1 << 0 = 0b00000001
+                print(f"Checking pin {button_pin} with mask {bin(mask)}.")
+ 
+                if not (button_state & mask):
+                    print(f"Button press detected on pin {button_pin} (chip {button_expander}).")
+ 
+                    # Debounce: Confirm button is still pressed
+                    time.sleep(0.05)  # 50ms debounce delay
+                    button_state = read_register(button_expander, GPIOA)
+ 
+                    if not (button_state & mask):
+                        print(f"Confirmed button press on pin {button_pin}. Turning off LED.")
+ 
+                        # Turn off the LED
+                        new_output &= ~(1 << led_pin)
+                        write_register(expander, OLATB, new_output)
+ 
+                        # Verify LED is off
+                        final_output = read_register(expander, OLATB)
+                        if not (final_output & (1 << led_pin)):
+                            print(f"LED for {material} successfully turned OFF.")
+ 
+                        print(f"Confirmation sent for {material}. Moving to next material.")
+                        break  # Exit the loop and move to the next material
+        else:
+            return jsonify({'error': f'Invalid material: {material}'}), 400
+ 
+    return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
+/*************************************************************************************************************************************************/
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    """Activate LEDs and wait for button press confirmation."""
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name')
+ 
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+ 
+    for material in materials:
+        if material in led_pins:
+            # Retrieve LED pin configuration (GPIOB)
+            expander = led_pins[material]['chip']
+            led_pin = led_pins[material]['pin']
+ 
+            # Turn on the LED
+            current_output = read_register(expander, OLATB)  # GPIOB output latch
+            new_output = current_output | (1 << led_pin)
+            write_register(expander, OLATB, new_output)
+            print(f"LED for {material} ON (chip {expander}, pin {led_pin}).")
+ 
+            # Retrieve button pin configuration (GPIOA)
+            button_expander = button_pins[material]['chip']
+            button_pin = button_pins[material]['pin']
+ 
+            print(f"Monitoring button on chip {button_expander}, pin {button_pin} (GPA{button_pin}).")
+ 
+            # Monitor for button press with debouncing
+            while True:
+                button_state = read_register(button_expander, GPIOA)  # Read GPIOA state
+                print(f"Button state: {bin(button_state)} (chip {button_expander}).")
+ 
+                # Mask and check if the correct button pin is LOW (pressed)
+                mask = (1 << button_pin)  # Create a bitmask for the button pin
+                print(f"Checking pin {button_pin} with mask {bin(mask)}.")
+ 
+                if not (button_state & mask):  # Button pressed (LOW state)
+                    print(f"Button press detected on pin {button_pin} (chip {button_expander}).")
+ 
+                    # Debounce: Confirm button is still pressed
+                    time.sleep(0.05)  # 50ms debounce
+                    button_state = read_register(button_expander, GPIOA)
+                    if not (button_state & mask):
+                        print(f"Confirmed button press on pin {button_pin}. Turning off LED.")
+ 
+                        # Turn off the LED
+                        new_output &= ~(1 << led_pin)
+                        write_register(expander, OLATB, new_output)
+ 
+                        # Verify the LED is off
+                        final_output = read_register(expander, OLATB)
+                        if not (final_output & (1 << led_pin)):
+                            print(f"LED for {material} successfully turned OFF.")
+ 
+                        print(f"Confirmation sent for {material}. Moving to next material.")
+                        break  # Exit the loop and move to the next material
+        else:
+            return jsonify({'error': f'Invalid material: {material}'}), 400
+ 
+    return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
