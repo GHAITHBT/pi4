@@ -1,0 +1,186 @@
+from flask import Flask, request, jsonify
+import RPi.GPIO as GPIO
+import socket
+import requests
+import time
+import threading
+import mysql.connector
+from mysql.connector import pooling
+import json
+import subprocess
+import socketio
+import spidev  # Import spidev for SPI communication
+
+app = Flask(__name__)
+hostname = socket.gethostname()
+sio = socketio.Client()
+
+# Database configuration
+db_config = {
+    'host': '10.110.10.204',
+    'user': 'root',
+    'password': 'Passw0rd123',
+    'database': 'PickByLight'
+}
+
+# Chip Select Pins for each MCP23S17
+CHIP_SELECT_PINS = [5, 6, 25, 24]  # Chip select pins for the 4 MCP23S17 chips
+
+# Initialize SPI
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Use SPI bus 0, chip 0
+spi.max_speed_hz = 1000000  # Set SPI clock speed to 1 MHz
+
+# GPIO setup
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+# Configure chip select pins as outputs and set them HIGH initially
+for cs_pin in CHIP_SELECT_PINS:
+    GPIO.setup(cs_pin, GPIO.OUT)
+    GPIO.output(cs_pin, GPIO.HIGH)
+
+# MCP23S17 Register Addresses
+IODIRA = 0x00  # Port A direction register (1=input, 0=output)
+IODIRB = 0x01  # Port B direction register (1=input, 0=output)
+GPIOA = 0x12   # Port A GPIO register
+GPIOB = 0x13   # Port B GPIO register
+OLATB = 0x15   # Port B output latch register
+
+# Function to manually select an MCP23S17 chip
+def select_chip(chip):
+    """Set the specified chip's CS pin LOW and all others HIGH."""
+    for i, cs_pin in enumerate(CHIP_SELECT_PINS):
+        GPIO.output(cs_pin, GPIO.LOW if i == chip else GPIO.HIGH)
+
+# Function to initialize all MCP23S17 chips
+def initialize_mcp23s17():
+    for chip in range(4):
+        select_chip(chip)
+        spi.xfer([IODIRA, 0xFF])  # Set Port A (buttons) as inputs
+        spi.xfer([IODIRB, 0x00])  # Set Port B (LEDs) as outputs
+        select_chip(-1)  # Deselect all chips
+
+# Function to control an LED on a specific MCP23S17 chip
+def write_led(chip, pin, value):
+    """Control an LED on a specific chip and pin."""
+    select_chip(chip)
+    current_state = spi.xfer2([OLATB, 0x00])[1]
+    if value:
+        new_state = current_state | (1 << pin)  # Set the pin HIGH
+    else:
+        new_state = current_state & ~(1 << pin)  # Set the pin LOW
+    spi.xfer([OLATB, new_state])
+    select_chip(-1)
+
+# Function to read a button state from a specific MCP23S17 chip
+def read_button(chip, pin):
+    """Read the state of a button from a specific chip and pin."""
+    select_chip(chip)
+    state = spi.xfer2([GPIOA, 0x00])[1]
+    select_chip(-1)
+    return not bool(state & (1 << pin))  # Return True if pressed
+
+# Fetch configuration from the database
+def fetch_configuration():
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+config = fetch_configuration()
+machine_name = config.get('machine_name', '')
+led_pins = config.get('led_pins', {})
+button_pins = config.get('button_pins', {})
+led_status = {material: False for material in led_pins.keys()}
+
+# Activate LEDs based on the materials list
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name')
+
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+
+    for material in materials:
+        if material in led_pins:
+            chip, pin = led_pins[material]['chip'], led_pins[material]['pin']
+            write_led(chip, pin, True)
+            led_status[material] = True
+            print(f"LED for {material} activated. Waiting for confirmation.")
+
+            while True:
+                button_chip, button_pin = button_pins[material]['chip'], button_pins[material]['pin']
+                if read_button(button_chip, button_pin):
+                    write_led(chip, pin, False)
+                    led_status[material] = False
+                    print(f"Confirmation received for {material}. Moving to next.")
+
+                    try:
+                        response = requests.post(
+                            'http://10.110.10.204:5001/confirmation_material',
+                            json={'material': material, 'hostname': hostname, 'machine_name': machine_name}
+                        )
+                        response.raise_for_status()
+                    except requests.RequestException as e:
+                        print(f"Error sending confirmation: {e}")
+                    break
+        else:
+            return jsonify({'error': f'Invalid material: {material}'}), 400
+
+    return jsonify({'status': 'All materials processed.'}), 200
+
+# Deactivate an LED
+@app.route('/deactivate_led', methods=['POST'])
+def deactivate_led():
+    data = request.json
+    material = data.get('material')
+
+    if material in led_pins:
+        chip, pin = led_pins[material]['chip'], led_pins[material]['pin']
+        write_led(chip, pin, False)
+        led_status[material] = False
+        return jsonify({'status': 'LED deactivated'}), 200
+    return jsonify({'error': 'Invalid material'}), 400
+
+# Verify LEDs by blinking each one
+def verify_leds():
+    for material, pin_info in led_pins.items():
+        chip, pin = pin_info['chip'], pin_info['pin']
+        write_led(chip, pin, True)
+        time.sleep(1)
+        write_led(chip, pin, False)
+        time.sleep(0.2)
+
+# Flask app runner in a separate thread
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
+
+# Main function
+def main():
+    initialize_mcp23s17()
+    verify_leds()
+
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    while True:
+        time.sleep(1)  # Keep the program running
+
+if __name__ == '__main__':
+    main()
