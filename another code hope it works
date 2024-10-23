@@ -1,0 +1,213 @@
+from flask import Flask, request, jsonify
+import RPi.GPIO as GPIO
+import socket
+import requests
+import time
+import threading
+import mysql.connector
+from mysql.connector import pooling
+import json
+import spidev  # For SPI communication with MCP23S17
+import socketio
+
+app = Flask(__name__)
+hostname = socket.gethostname()
+sio = socketio.Client()
+
+# Database configuration
+db_config = {
+    'host': '10.110.10.204',
+    'user': 'root',
+    'password': 'Passw0rd123',
+    'database': 'PickByLight'
+}
+
+# MCP23S17 Chip Select Pins for 4 chips
+CHIP_SELECT_PINS = [5, 6, 25, 24]
+
+# SPI setup
+spi = spidev.SpiDev()
+spi.open(0, 0)  # Use SPI bus 0, chip 0
+spi.max_speed_hz = 1000000  # Set SPI speed to 1 MHz
+
+# GPIO setup
+GPIO.setmode(GPIO.BCM)
+GPIO.setwarnings(False)
+
+# Set CS pins as outputs and initialize them HIGH (inactive)
+for cs_pin in CHIP_SELECT_PINS:
+    GPIO.setup(cs_pin, GPIO.OUT)
+    GPIO.output(cs_pin, GPIO.HIGH)
+
+# MCP23S17 Register Addresses
+IODIRA = 0x00  # Port A direction register (buttons)
+IODIRB = 0x01  # Port B direction register (LEDs)
+GPIOA = 0x12   # Port A GPIO register
+GPIOB = 0x13   # Port B GPIO register
+OLATB = 0x15   # Port B output latch register
+
+# Get the IP address of the Raspberry Pi
+def get_ip_address():
+    """Fetch the IP address of the Raspberry Pi."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception as e:
+        print(f"Error retrieving IP address: {e}")
+        ip = "127.0.0.1"  # Default to localhost on error
+    finally:
+        s.close()
+    return ip
+
+# Get a database connection from the pool
+def get_db_connection():
+    """Fetch a connection from the MySQL connection pool."""
+    try:
+        connection = mysql_pool.get_connection()
+        if connection.is_connected():
+            return connection
+        else:
+            raise Exception("Failed to establish database connection.")
+    except mysql.connector.Error as err:
+        print(f"Error connecting to database: {err}")
+        raise
+
+# Initialize the MCP23S17 chips
+def initialize_mcp23s17():
+    for chip in range(4):
+        select_chip(chip)
+        spi.xfer([IODIRA, 0xFF])  # Port A as input (buttons)
+        spi.xfer([IODIRB, 0x00])  # Port B as output (LEDs)
+        select_chip(-1)  # Deselect all chips
+
+# Helper to manage chip selection
+def select_chip(chip):
+    """Activate the chip by setting its CS pin LOW and deselect others."""
+    for i, cs_pin in enumerate(CHIP_SELECT_PINS):
+        GPIO.output(cs_pin, GPIO.LOW if i == chip else GPIO.HIGH)
+
+# Control an LED on a specific MCP23S17 chip
+def write_led(chip, pin, value):
+    """Turn the LED on/off for a specific chip and pin on Port B."""
+    select_chip(chip)
+    current_state = spi.xfer2([OLATB, 0x00])[1]
+    if value:
+        new_state = current_state | (1 << pin)  # Set the pin HIGH
+    else:
+        new_state = current_state & ~(1 << pin)  # Set the pin LOW
+    spi.xfer([OLATB, new_state])
+    select_chip(-1)  # Deselect the chip
+
+# Read button state from a specific MCP23S17 chip
+def read_button(chip, pin):
+    """Read button state from the specified chip and pin on Port A."""
+    select_chip(chip)
+    state = spi.xfer2([GPIOA, 0x00])[1]
+    select_chip(-1)  # Deselect the chip
+    return not bool(state & (1 << pin))  # Return True if button is pressed (grounded)
+
+# Fetch configuration from the database
+def fetch_configuration():
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+config = fetch_configuration()
+machine_name = config.get('machine_name', '')
+led_pins = config.get('led_pins', {})
+button_pins = config.get('button_pins', {})
+led_status = {material: False for material in led_pins.keys()}
+
+# Activate LEDs based on the received materials
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name')
+
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+
+    for material in materials:
+        if material in led_pins:
+            chip, pin = led_pins[material]['chip'], led_pins[material]['pin']
+            write_led(chip, pin, True)  # Turn on the LED
+            led_status[material] = True
+            print(f"LED for {material} activated. Waiting for confirmation.")
+
+            # Wait for button confirmation
+            while True:
+                button_chip, button_pin = button_pins[material]['chip'], button_pins[material]['pin']
+                if read_button(button_chip, button_pin):
+                    write_led(chip, pin, False)  # Turn off the LED
+                    led_status[material] = False
+                    print(f"Confirmation received for {material}. Moving to next.")
+
+                    try:
+                        response = requests.post(
+                            'http://10.110.10.204:5001/confirmation_material',
+                            json={'material': material, 'hostname': hostname, 'machine_name': machine_name}
+                        )
+                        response.raise_for_status()
+                    except requests.RequestException as e:
+                        print(f"Error sending confirmation: {e}")
+                    break
+        else:
+            return jsonify({'error': f'Invalid material: {material}'}), 400
+
+    return jsonify({'status': 'All materials processed.'}), 200
+
+# Deactivate an LED
+@app.route('/deactivate_led', methods=['POST'])
+def deactivate_led():
+    data = request.json
+    material = data.get('material')
+
+    if material in led_pins:
+        chip, pin = led_pins[material]['chip'], led_pins[material]['pin']
+        write_led(chip, pin, False)  # Turn off the LED
+        led_status[material] = False
+        return jsonify({'status': 'LED deactivated'}), 200
+    return jsonify({'error': 'Invalid material'}), 400
+
+# Verify LEDs by blinking each one briefly
+def verify_leds():
+    for material, pin_info in led_pins.items():
+        chip, pin = pin_info['chip'], pin_info['pin']
+        write_led(chip, pin, True)
+        time.sleep(1)
+        write_led(chip, pin, False)
+        time.sleep(0.2)
+
+# Flask app runner in a separate thread
+def run_flask():
+    app.run(host='0.0.0.0', port=5000)
+
+# Main function
+def main():
+    initialize_mcp23s17()
+    verify_leds()
+
+    flask_thread = threading.Thread(target=run_flask, daemon=True)
+    flask_thread.start()
+
+    while True:
+        time.sleep(1)  # Keep the program running
+
+if __name__ == '__main__':
+    main()
