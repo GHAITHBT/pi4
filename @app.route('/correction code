@@ -1,0 +1,77 @@
+def fetch_configuration():
+    """Fetch configuration based on the Raspberry Pi's IP address."""
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            # Convert the led_pins and button_pins from JSON strings to dictionaries
+            config['led_pins'] = json.loads(config['led_pins']) if config.get('led_pins') else {}
+            config['button_pins'] = json.loads(config['button_pins']) if config.get('button_pins') else {}
+            return config
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    """Activate LEDs and wait for button press confirmation."""
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name')
+
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+
+    for material in materials:
+        if material in led_pins:
+            expander = led_pins[material]['chip']  # Ensure 'chip' key exists
+            pin = led_pins[material]['pin']  # Ensure 'pin' key exists
+
+            # Turn on the LED
+            current_output = read_register(expander, OLATA)  # GPIOA output latch
+            new_output = current_output | (1 << pin)
+            write_register(expander, OLATA, new_output)
+            print(f"LED for {material} ON (chip {expander}, pin {pin}).")
+
+            # Retrieve button pin configuration (GPIOB)
+            button_expander = button_pins[material]['chip']  # Ensure 'chip' key exists for buttons
+            button_pin = button_pins[material]['pin']  # Ensure 'pin' key exists for buttons
+
+            print(f"Monitoring button on chip {button_expander}, pin {button_pin} (GPIOB).")
+
+            # Monitor for button press with debouncing
+            while True:
+                button_state = read_register(button_expander, GPIOB)  # Read GPIOB state
+                print(f"Button state: {bin(button_state)} (chip {button_expander}).")
+
+                # Mask and check if the correct button pin is LOW (pressed)
+                mask = (1 << button_pin)  # Create a bitmask for the button pin
+                print(f"Checking pin {button_pin} with mask {bin(mask)}.")
+
+                if not (button_state & mask):  # Button pressed (LOW state)
+                    print(f"Button press detected on pin {button_pin} (chip {button_expander}).")
+
+                    # Debounce: Confirm button is still pressed
+                    time.sleep(0.05)  # 50ms debounce
+                    button_state = read_register(button_expander, GPIOB)
+                    if not (button_state & mask):
+                        print(f"Confirmed button press on pin {button_pin}. Turning off LED.")
+
+                        # Turn off the LED
+                        new_output &= ~(1 << pin)
+                        write_register(expander, OLATA, new_output)
+
+                        # Verify the LED is off
+                        final_output = read_register(expander, OLATA)
+                        if not (final_output & (1 << pin)):
+                            print(f"LED for {material} successfully turned OFF.")
+
+                        print(f"Confirmation sent for {material}. Moving to next material.")
+                        break  # Exit the loop and move to the next material
+        else:
+            return jsonify({'error': f'Invalid material: {material}'}), 400
+
+    return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
