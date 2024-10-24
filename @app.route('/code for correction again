@@ -7,10 +7,12 @@ from flask import Flask, request, jsonify
 import socket
 import mysql.connector
 from mysql.connector import pooling
-hostname = socket.gethostname()
-app = Flask(__name__)
 
-# SPI Configuration
+# Flask setup
+app = Flask(__name__)
+hostname = socket.gethostname()
+
+# SPI and GPIO Configuration
 spi = spidev.SpiDev()
 spi.open(0, 0)  # Use SPI bus 0
 spi.max_speed_hz = 1000000  # 1 MHz
@@ -38,91 +40,82 @@ db_config = {
 # MySQL Connection Pool
 mysql_pool = pooling.MySQLConnectionPool(pool_name="mysql_pool", pool_size=5, **db_config)
 
-# Setup GPIO for CS Pins
+# GPIO Setup for CS Pins
 GPIO.setmode(GPIO.BCM)
 for pin in cs_pins:
     GPIO.setup(pin, GPIO.OUT)
     GPIO.output(pin, GPIO.HIGH)  # Set all CS pins HIGH (inactive)
 
+# Helper Functions for SPI Communication
 def select_expander(expander):
     """Activate the correct expander's CS pin."""
     for i, pin in enumerate(cs_pins):
         GPIO.output(pin, GPIO.LOW if i == expander else GPIO.HIGH)
 
+def deselect_chip(expander):
+    """Deselect the current chip."""
+    GPIO.output(cs_pins[expander], GPIO.HIGH)
+
 def write_register(expander, register, value):
     """Write data to an MCP23S17 register."""
     select_expander(expander)
     spi.xfer2([mcp23s17_addresses[expander], register, value])
-    GPIO.output(cs_pins[expander], GPIO.HIGH)  # Deselect the expander
+    deselect_chip(expander)
 
 def read_register(expander, register):
     """Read data from an MCP23S17 register."""
     select_expander(expander)
     result = spi.xfer2([mcp23s17_addresses[expander] + 1, register, 0x00])
-    GPIO.output(cs_pins[expander], GPIO.HIGH)  # Deselect the expander
+    deselect_chip(expander)
     return result[2]
 
+# GPIO Initialization
 def setup_mcp23s17(expander):
     """Set GPIOA as inputs and GPIOB as outputs."""
     write_register(expander, IODIRA, 0xFF)  # GPIOA as inputs (buttons)
     write_register(expander, IODIRB, 0x00)  # GPIOB as outputs (LEDs)
 
 def initialize_gpio(config):
-    """Initialize all MCP23S17 chips."""
+    """Initialize MCP23S17 chips."""
     for expander in range(len(cs_pins)):
         setup_mcp23s17(expander)
 
     # Ensure all LEDs are off initially
     for material, led_config in config['led_pins'].items():
-        expander = led_config['chip']
+        chip = led_config['chip']
         pin = led_config['pin']
-        current_output = read_register(expander, OLATB)
-        new_output = current_output & ~(1 << pin)
-        write_register(expander, OLATB, new_output)  # Turn off LEDs
+        deactivate_led_for_material(chip, pin)
+
+def activate_led_for_material(chip, led_pin):
+    """Turn on the LED for the given material."""
+    current_output = read_register(chip, OLATB)
+    new_output = current_output & ~(1 << led_pin)  # Active low to turn on
+    write_register(chip, OLATB, new_output)
+
+def deactivate_led_for_material(chip, led_pin):
+    """Turn off the LED for the given material."""
+    current_output = read_register(chip, OLATB)
+    new_output = current_output | (1 << led_pin)  # Active high to turn off
+    write_register(chip, OLATB, new_output)
 
 def verify_leds():
-    """Turn on all LEDs for 2 seconds and then turn them off."""
+    """Verify LEDs by turning them all on briefly."""
     print("Verifying all LEDs...")
-    # Turn on all LEDs
     for material, led_config in led_pins.items():
-        expander = led_config['chip']
+        chip = led_config['chip']
         pin = led_config['pin']
-        current_output = read_register(expander, OLATB)
-        new_output = current_output | (1 << pin)
-        write_register(expander, OLATB, new_output)
+        activate_led_for_material(chip, pin)
 
-    # Wait for 2 seconds
     time.sleep(2)
 
-    # Turn off all LEDs
     for material, led_config in led_pins.items():
-        expander = led_config['chip']
+        chip = led_config['chip']
         pin = led_config['pin']
-        current_output = read_register(expander, OLATB)
-        new_output = current_output & ~(1 << pin)
-        write_register(expander, OLATB, new_output)
+        deactivate_led_for_material(chip, pin)
 
     print("LED verification completed.")
-led_status = {}
-def fetch_configuration():
-    """Fetch configuration based on the Raspberry Pi's IP address."""
-    ip_address = get_ip_address()
-    connection = get_db_connection()
-    try:
-        cursor = connection.cursor(dictionary=True)
-        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
-        config = cursor.fetchone()
-        if config:
-            config['led_pins'] = json.loads(config['led_pins'])
-            config['button_pins'] = json.loads(config['button_pins'])
-            return config
-        return {}
-    finally:
-        cursor.close()
-        connection.close()
-GPIOB = 0x13   # GPIO register for Bank B (LEDs)
-# Activate the LEDs for materials one by one, waiting for button press confirmation
-# Flask route to handle material activation
+
+# Flask Routes
 @app.route('/activate_led', methods=['POST'])
 def activate_led():
     data = request.json
@@ -138,15 +131,15 @@ def activate_led():
             led_pin = led_pins[material]['pin']
             button_pin = button_pins[material]['pin']
 
-            # Turn on the LED (active low)
-            write_register(chip, GPIOB, ~(1 << led_pin))
+            # Activate LED
+            activate_led_for_material(chip, led_pin)
             print(f"LED for {material} is ON")
 
             # Wait for button press confirmation
             while True:
                 button_state = read_register(chip, GPIOA)
                 if not (button_state & (1 << button_pin)):  # Button pressed (active low)
-                    write_register(chip, GPIOB, 0xFF)  # Turn off the LED
+                    deactivate_led_for_material(chip, led_pin)  # Turn off the LED
                     print(f"Material {material} confirmed")
 
                     # Send confirmation
@@ -167,14 +160,17 @@ def activate_led():
 def deactivate_led():
     data = request.json
     material = data.get('material')
+
     if material in led_pins:
         chip = led_pins[material]['chip']
-        write_register(chip, GPIOB, 0xFF)  # Turn off the LED
+        led_pin = led_pins[material]['pin']
+        deactivate_led_for_material(chip, led_pin)
         print(f"LED for {material} is OFF")
-        led_status[material] = False
         return jsonify({'status': 'LED deactivated'}), 200
+
     return jsonify({'error': 'Invalid material'}), 400
 
+# Utility Functions
 def get_ip_address():
     """Retrieve the Raspberry Pi's IP address."""
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -187,25 +183,34 @@ def get_ip_address():
         s.close()
     return ip
 
-def get_db_connection():
-    """Obtain a connection from the MySQL pool."""
-    return mysql_pool.get_connection()
+def fetch_configuration():
+    """Fetch configuration from the database."""
+    ip_address = get_ip_address()
+    connection = mysql_pool.get_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+        return config or {}
+    finally:
+        cursor.close()
+        connection.close()
 
 def main():
-    """Main entry point of the application."""
+    """Main entry point."""
     config = fetch_configuration()
     if not config:
         print("No configuration found for this Raspberry Pi.")
         return
 
-    global led_pins, button_pins, status_led_pin
-    led_pins = config.get('led_pins', {})
-    button_pins = config.get('button_pins', {})
-    status_led_pin = config.get('status_led_pin', 0)
+    global led_pins, button_pins
+    led_pins = config['led_pins']
+    button_pins = config['button_pins']
 
     initialize_gpio(config)
-
-    # Verify LEDs at startup
     verify_leds()
 
     try:
@@ -217,4 +222,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
