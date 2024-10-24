@@ -1,0 +1,198 @@
+from flask import Flask, request, jsonify
+import RPi.GPIO as GPIO
+import socket
+import requests
+import time
+import mysql.connector
+from mysql.connector import pooling
+import json
+import spidev  # SPI for MCP23S17
+
+app = Flask(__name__)
+
+hostname = socket.gethostname()
+
+# Database configuration
+db_config = {
+    'host': '10.110.10.204',
+    'user': 'root',
+    'password': 'Passw0rd123',
+    'database': 'PickByLight'
+}
+
+# Setup database connection pool
+mysql_pool = pooling.MySQLConnectionPool(
+    pool_name="mysql_pool",
+    pool_size=5,
+    **db_config
+)
+
+# SPI setup for MCP23S17
+spi = spidev.SpiDev()
+spi.open(0, 0)
+spi.max_speed_hz = 1000000  # 1 MHz speed
+
+# CS pins for each MCP23S17 chip
+cs_pins = {
+    0: 5,
+    1: 6,
+    2: 25,
+    3: 26
+}
+
+# Initialize GPIO for CS pins
+GPIO.setmode(GPIO.BCM)
+for pin in cs_pins.values():
+    GPIO.setup(pin, GPIO.OUT)
+    GPIO.output(pin, GPIO.HIGH)  # Set all CS pins to inactive
+
+# MCP23S17 Register addresses
+IODIRA = 0x00  # I/O direction for Bank A (buttons)
+IODIRB = 0x01  # I/O direction for Bank B (LEDs)
+GPPUA = 0x0C   # Pull-up resistors for Bank A
+GPIOA = 0x12   # GPIO register for Bank A (buttons)
+GPIOB = 0x13   # GPIO register for Bank B (LEDs)
+
+# Global variables to store pin configurations
+led_pins = {}
+button_pins = {}
+led_status = {}
+
+# Helper functions for SPI communication
+def select_chip(chip):
+    GPIO.output(cs_pins[chip], GPIO.LOW)
+
+def deselect_chip(chip):
+    GPIO.output(cs_pins[chip], GPIO.HIGH)
+
+def write_register(chip, register, value):
+    select_chip(chip)
+    spi.xfer2([0x40, register, value])
+    deselect_chip(chip)
+
+def read_register(chip, register):
+    select_chip(chip)
+    result = spi.xfer2([0x41, register, 0x00])[2]
+    deselect_chip(chip)
+    return result
+
+# Initialize MCP23S17 GPIO based on config
+def initialize_gpio(config):
+    global led_pins, button_pins
+
+    for material, info in config['led_pins'].items():
+        chip = info['chip']
+        write_register(chip, IODIRB, 0x00)  # Set GPIOB as output for LEDs
+        write_register(chip, GPIOB, 0xFF)  # Ensure all LEDs are off
+
+    for material, info in config['button_pins'].items():
+        chip = info['chip']
+        write_register(chip, IODIRA, 0xFF)  # Set GPIOA as input for buttons
+        write_register(chip, GPPUA, 0xFF)   # Enable pull-ups on GPIOA
+
+    led_pins = config['led_pins']
+    button_pins = config['button_pins']
+
+# Fetch configuration from the database
+def fetch_configuration():
+    ip_address = get_ip_address()
+    connection = get_db_connection()
+    try:
+        cursor = connection.cursor(dictionary=True)
+        cursor.execute('SELECT * FROM rasp_pi_configurations WHERE ip_address = %s', (ip_address,))
+        config = cursor.fetchone()
+        if config:
+            config['led_pins'] = json.loads(config['led_pins'])
+            config['button_pins'] = json.loads(config['button_pins'])
+            return config
+        return {}
+    except mysql.connector.Error as err:
+        print(f"Database error: {err}")
+        return {}
+    finally:
+        cursor.close()
+        connection.close()
+
+# Get IP address of Raspberry Pi
+def get_ip_address():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = "127.0.0.1"
+    finally:
+        s.close()
+    return ip
+
+# Flask route to handle material activation
+@app.route('/activate_led', methods=['POST'])
+def activate_led():
+    data = request.json
+    materials = data.get('materials', [])
+    machine_name = data.get('machine_name', '')
+
+    if not materials or not machine_name:
+        return jsonify({'error': 'No materials or machine_name provided'}), 400
+
+    for material in materials:
+        if material in led_pins:
+            chip = led_pins[material]['chip']
+            led_pin = led_pins[material]['pin']
+            button_pin = button_pins[material]['pin']
+
+            # Turn on the LED (active low)
+            write_register(chip, GPIOB, ~(1 << led_pin))
+            print(f"LED for {material} is ON")
+
+            # Wait for button press confirmation
+            while True:
+                button_state = read_register(chip, GPIOA)
+                if not (button_state & (1 << button_pin)):  # Button pressed (active low)
+                    write_register(chip, GPIOB, 0xFF)  # Turn off the LED
+                    print(f"Material {material} confirmed")
+
+                    # Send confirmation
+                    try:
+                        response = requests.post(
+                            'http://10.110.10.204:5001/confirmation_material',
+                            json={'material': material, 'hostname': hostname, 'machine_name': machine_name}
+                        )
+                        response.raise_for_status()
+                    except requests.RequestException as e:
+                        print(f"Error sending confirmation for {material}: {e}")
+                    break
+                time.sleep(0.1)  # Debounce
+
+    return jsonify({'status': f'All materials processed for machine {machine_name}'}), 200
+
+@app.route('/deactivate_led', methods=['POST'])
+def deactivate_led():
+    data = request.json
+    material = data.get('material')
+    if material in led_pins:
+        chip = led_pins[material]['chip']
+        write_register(chip, GPIOB, 0xFF)  # Turn off the LED
+        print(f"LED for {material} is OFF")
+        led_status[material] = False
+        return jsonify({'status': 'LED deactivated'}), 200
+    return jsonify({'error': 'Invalid material'}), 400
+
+# Main function to start the Flask app
+def main():
+    config = fetch_configuration()
+    if not config:
+        print("No configuration found for this Raspberry Pi.")
+        return
+
+    initialize_gpio(config)
+
+    try:
+        app.run(host='0.0.0.0', port=5000)
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        GPIO.cleanup()
+
+if __name__ == '__main__':
+    main()
